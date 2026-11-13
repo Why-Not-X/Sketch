@@ -35,10 +35,15 @@ public struct Stroke: Codable, Equatable, Sendable {
     public var isPencil: Bool
     /// Blots left by dwelling (G15) while drawing this stroke.
     public var blots: [InkBlot]
+    /// G17 ribbon: the second edge, one point per point of `points`. The space between
+    /// the two edges is filled.
+    public var partner: [InkPoint]?
 
-    public init(id: UInt32, points: [InkPoint], isPencil: Bool, blots: [InkBlot] = []) {
-        self.id = id; self.points = points; self.isPencil = isPencil; self.blots = blots
+    public init(id: UInt32, points: [InkPoint], isPencil: Bool, blots: [InkBlot] = [], partner: [InkPoint]? = nil) {
+        self.id = id; self.points = points; self.isPencil = isPencil; self.blots = blots; self.partner = partner
     }
+
+    public var isRibbon: Bool { partner != nil }
 
     /// A closed, evenly sampled circle (G10 "snaps into a clean ring").
     public static func circle(id: UInt32, centerX: Float, centerY: Float, radius: Float,
@@ -75,6 +80,26 @@ public struct InkDocument: Codable, Equatable, Sendable {
         out.reserveCapacity(strokes.count)
         for stroke in strokes {
             guard stroke.intersects(x: x, y: y, radius: radius) else { out.append(stroke); continue }
+            if let partner = stroke.partner {
+                // Ribbons are removed whole when the eraser touches either edge or the fill.
+                func inside(_ px: Float, _ py: Float) -> Bool {
+                    let dx = px - x, dy = py - y
+                    return dx * dx + dy * dy <= r2
+                }
+                var hit = false
+                for (a, b) in zip(stroke.points, partner) {
+                    let mx: Float = (a.x + b.x) * 0.5
+                    let my: Float = (a.y + b.y) * 0.5
+                    if inside(a.x, a.y) || inside(b.x, b.y) || inside(mx, my) { hit = true; break }
+                }
+                if hit {
+                    changed = true
+                    for p in stroke.points { erased.append(SIMD2(p.x, p.y)) }
+                } else {
+                    out.append(stroke)
+                }
+                continue
+            }
             var pieces: [[InkPoint]] = [[]]
             var hit = false
             for p in stroke.points {
@@ -121,6 +146,9 @@ extension Stroke {
         for p in points {
             minX = min(minX, p.x); maxX = max(maxX, p.x); minY = min(minY, p.y); maxY = max(maxY, p.y)
             pad = max(pad, p.width)
+        }
+        for p in partner ?? [] {
+            minX = min(minX, p.x); maxX = max(maxX, p.x); minY = min(minY, p.y); maxY = max(maxY, p.y)
         }
         for b in blots {
             minX = min(minX, b.x - b.radius); maxX = max(maxX, b.x + b.radius)

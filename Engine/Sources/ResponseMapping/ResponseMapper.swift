@@ -49,15 +49,17 @@ public final class ResponseMapper {
 
         case .changed:
             for (slot, spec) in def.effects.enumerated() where isKeyed(spec, def) {
-                let k = key(e, slot: slot, perTouch: spec.perTouch ?? true)
-                visual(.update(key: k, x: e.x, y: e.y,
+                let k = key(e, slot: spec.keySlot ?? slot, perTouch: spec.perTouch ?? true)
+                let (x, y) = position(spec, e)
+                visual(.update(key: k, x: x, y: y,
                                radius: radius(spec, e), intensity: intensity(spec, e, boost: boost)))
+                if !e.touchPoints.isEmpty { visual(.updatePoints(key: k, points: e.touchPoints)) }
             }
 
         case .ended:
             // The trigger ended: ambient effects fade. Replacing effects (G4 pulse) run on.
-            for (slot, spec) in def.effects.enumerated() where persistence(spec, def) == .ambient {
-                visual(.release(key: key(e, slot: slot, perTouch: spec.perTouch ?? true)))
+            for (slot, spec) in def.effects.enumerated() where persistence(spec, def) == .ambient && (spec.spawnOn ?? .start) == .start {
+                visual(.release(key: key(e, slot: spec.keySlot ?? slot, perTouch: spec.perTouch ?? true)))
             }
             for (slot, spec) in def.effects.enumerated() where spec.spawnOn == .end && passes(spec, e) {
                 visual(.spawn(spawn(spec, slot: slot, def: def, event: e, boost: boost)))
@@ -66,8 +68,8 @@ public final class ResponseMapper {
         case .cancelled:
             // A provisional gesture turned out wrong (R1): fade everything it keyed,
             // so a cancelled rhythm tap does not leave the pulse at a stroke's start.
-            for (slot, spec) in def.effects.enumerated() where isKeyed(spec, def) {
-                visual(.release(key: key(e, slot: slot, perTouch: spec.perTouch ?? true)))
+            for (slot, spec) in def.effects.enumerated() where isKeyed(spec, def) && (spec.spawnOn ?? .start) == .start {
+                visual(.release(key: key(e, slot: spec.keySlot ?? slot, perTouch: spec.perTouch ?? true)))
             }
         }
     }
@@ -79,7 +81,20 @@ public final class ResponseMapper {
         case .none: return true
         case .magnitudePositive: return e.magnitude > 0
         case .magnitudeNegative: return e.magnitude < 0
+        case .fired: return e.phase == .fired
+        case .began: return e.phase == .began
         }
+    }
+
+    private func position(_ spec: EffectSpec, _ e: GestureEvent) -> (Float, Float) {
+        spec.at == .origin ? (e.originX, e.originY) : (e.x, e.y)
+    }
+
+    /// The key a spec slot of a gesture uses, for canvas code that must address an
+    /// effect directly (G24: clearing the gathered orb on undo).
+    public func keyFor(_ gesture: GestureID, slot: Int, touchID: UInt16 = 0, perTouch: Bool = false) -> UInt64 {
+        key(GestureEvent(gesture: gesture, phase: .began, timestamp: 0, x: 0, y: 0, touchID: touchID),
+            slot: slot, perTouch: perTouch)
     }
 
     private func persistence(_ spec: EffectSpec, _ def: ResponseDefinition) -> Persistence {
@@ -116,13 +131,14 @@ public final class ResponseMapper {
     private func spawn(_ spec: EffectSpec, slot: Int, def: ResponseDefinition,
                        event e: GestureEvent, boost: Float) -> EffectSpawn {
         let p = persistence(spec, def)
-        let keyed = isKeyed(spec, def)
+        let keyed = isKeyed(spec, def) || spec.keySlot != nil
         let r = radius(spec, e)
         let scale = spec.radius > 0 ? r / spec.radius : 1
+        let (x, y) = position(spec, e)
         return EffectSpawn(
-            key: keyed ? key(e, slot: slot, perTouch: spec.perTouch ?? true) : 0,
+            key: keyed ? key(e, slot: spec.keySlot ?? slot, perTouch: spec.perTouch ?? true) : 0,
             kind: spec.kind,
-            x: e.x, y: e.y,
+            x: x, y: y,
             radius: r,
             startRadius: (spec.startRadius ?? 0) * scale,
             duration: spec.duration ?? p.fadeDuration,
@@ -137,7 +153,9 @@ public final class ResponseMapper {
             directionX: e.directionX, directionY: e.directionY,
             speed: e.speed,
             magnitude: e.magnitude,
-            originX: e.originX, originY: e.originY
+            originX: e.originX, originY: e.originY,
+            points: e.touchPoints,
+            atEachPoint: spec.at == .eachTouch
         )
     }
 }

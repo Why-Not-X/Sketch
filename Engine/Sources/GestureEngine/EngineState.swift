@@ -9,6 +9,8 @@ public struct TouchTrack: Sendable {
     public var maxDisplacement: Float = 0
     /// Smoothed velocity in points per second.
     public var vx: Float = 0, vy: Float = 0
+    /// Last velocity sample point.
+    var velX: Float = 0, velY: Float = 0, velT: Double = 0
     public var majorRadius: Float = 0
     /// Another finger was down at some point during this touch.
     public var multiFinger = false
@@ -27,6 +29,10 @@ public struct TouchTrack: Sendable {
     public var slingshot = false
     /// A G5 hold turned into a drag (G14).
     public var holdDragging = false
+    /// Part of a finger-drumming run (G25): rhythm (G4) yields to it (R2).
+    public var drumming = false
+    /// Member of a multi-finger session.
+    public var inSession = false
 
     public var duration: Double { t - startT }
     public var speed: Float { (vx * vx + vy * vy).squareRoot() }
@@ -86,6 +92,7 @@ final class EngineState {
         tr.kind = e.kind
         tr.startX = e.x; tr.startY = e.y; tr.startT = e.timestamp
         tr.x = e.x; tr.y = e.y; tr.t = e.timestamp; tr.lastMoveT = e.timestamp
+        tr.velX = e.x; tr.velY = e.y; tr.velT = e.timestamp
         tr.majorRadius = e.majorRadius
         paths[i].removeAll(keepingCapacity: true)
         paths[i].append(PathPoint(x: e.x, y: e.y, t: e.timestamp))
@@ -111,11 +118,14 @@ final class EngineState {
 
     func move(_ i: Int, _ e: TouchEvent) {
         var tr = tracks[i]
-        let dt = Float(e.timestamp - tr.t)
-        if dt > 0 {
+        // Velocity is sampled against an anchor at least 2 ms old, so samples that
+        // arrive with (nearly) the same timestamp cannot produce absurd speeds.
+        let dt = Float(e.timestamp - tr.velT)
+        if dt >= 0.002 {
             let k: Float = 0.4
-            tr.vx += k * ((e.x - tr.x) / dt - tr.vx)
-            tr.vy += k * ((e.y - tr.y) / dt - tr.vy)
+            tr.vx += k * ((e.x - tr.velX) / dt - tr.vx)
+            tr.vy += k * ((e.y - tr.velY) / dt - tr.vy)
+            tr.velX = e.x; tr.velY = e.y; tr.velT = e.timestamp
         }
         tr.x = e.x; tr.y = e.y; tr.t = e.timestamp; tr.lastMoveT = e.timestamp
         let ox = e.x - tr.startX, oy = e.y - tr.startY
@@ -165,15 +175,18 @@ final class EngineState {
     func event(_ id: GestureID, _ phase: GesturePhase, _ i: Int, at t: Double? = nil,
                magnitude: Float = 0, tempo: Float = 0, speed: Float? = nil,
                x: Float? = nil, y: Float? = nil, size: Float = 0,
-               originX: Float = 0, originY: Float = 0) -> GestureEvent {
+               originX: Float = 0, originY: Float = 0,
+               dirX: Float? = nil, dirY: Float? = nil,
+               touchPoints: [Float] = [], touchIDs: [UInt16] = []) -> GestureEvent {
         let tr = tracks[i]
         let s = speed ?? tr.speed
         let v = tr.speed
         return GestureEvent(gesture: id, phase: phase, timestamp: t ?? tr.t, x: x ?? tr.x, y: y ?? tr.y,
                             speed: s,
-                            directionX: v > 0 ? tr.vx / v : 0, directionY: v > 0 ? tr.vy / v : 0,
+                            directionX: dirX ?? (v > 0 ? tr.vx / v : 0), directionY: dirY ?? (v > 0 ? tr.vy / v : 0),
                             fingerCount: UInt8(max(1, fingersDown)),
                             magnitude: magnitude, tempo: tempo, touchID: UInt16(i),
-                            size: size, originX: originX, originY: originY)
+                            size: size, originX: originX, originY: originY,
+                            touchPoints: touchPoints, touchIDs: touchIDs)
     }
 }

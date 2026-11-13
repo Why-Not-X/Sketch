@@ -103,3 +103,19 @@ public enum BlotTessellator {
         }
     }
 }
+
+/// G17 ribbons: fills the space between two edges with translucent ink. The edges
+/// themselves are drawn as ordinary strokes, which gives the bright, gradient edge.
+public enum RibbonTessellator {
+    public static func appendFill(_ a: [InkPoint], _ b: [InkPoint], alpha: Float, into out: inout [InkVertex]) {
+        let n = min(a.count, b.count)
+        guard n >= 2 else { return }
+        func v(_ p: InkPoint) -> InkVertex {
+            InkVertex(x: p.x, y: p.y, u: 0, coreFrac: 1, alpha: alpha, along: 0, halfWidth: 1)
+        }
+        for k in 1..<n {
+            out.append(v(a[k - 1])); out.append(v(b[k - 1])); out.append(v(a[k]))
+            out.append(v(b[k - 1])); out.append(v(b[k])); out.append(v(a[k]))
+        }
+    }
+}

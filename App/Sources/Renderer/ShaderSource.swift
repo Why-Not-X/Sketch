@@ -32,6 +32,50 @@ enum ShaderSource {
         float4 sparkleColor;
     };
 
+    // Ink distortions (G11, G14, G18, G19, G20, G22, G23, G24): displace ink vertices,
+    // then let the ink return to rest as each distortion fades.
+    struct Distortion {
+        packed_float2 center;  // points
+        float radius;
+        float strength;
+        float kind;            // 0 ripple, 1 twist, 2 pull, 3 wave
+        float phase;           // ripple: wavefront radius; wave: distance travelled
+        packed_float2 dir;     // wave direction
+    };
+
+    struct DistortionBlock {
+        uint count;
+        uint pad0, pad1, pad2;
+        Distortion d[8];
+    };
+
+    static float2 distort(float2 p, constant DistortionBlock& D) {
+        for (uint k = 0; k < D.count; k++) {
+            Distortion d = D.d[k];
+            float2 c = float2(d.center);
+            float2 v = p - c;
+            float r = length(v);
+            if (d.kind < 0.5) {
+                float x = (r - d.phase) / 28.0;
+                float env = exp(-x * x) * d.strength * (1.0 - smoothstep(d.radius * 0.6, d.radius, r));
+                p += (r > 1e-3 ? v / r : float2(0.0)) * sin(x * 3.14159) * env * 10.0;
+            } else if (d.kind < 1.5) {
+                float f = 1.0 - smoothstep(0.0, d.radius, r);
+                float a = d.strength * f * f;
+                float ca = cos(a), sa = sin(a);
+                p = c + float2(v.x * ca - v.y * sa, v.x * sa + v.y * ca);
+            } else if (d.kind < 2.5) {
+                float f = 1.0 - smoothstep(0.0, d.radius, r);
+                p = c + v * (1.0 - clamp(d.strength, 0.0, 0.99) * f);
+            } else {
+                float2 dir = float2(d.dir);
+                float s = dot(v, dir) - d.phase;
+                p += dir * exp(-(s / 40.0) * (s / 40.0)) * d.strength * 14.0;
+            }
+        }
+        return p;
+    }
+
     static float4 ptToClip(float2 pt, constant Uniforms& U) {
         float2 ndc = pt / U.viewSize * 2.0 - 1.0;
         return float4(ndc.x, -ndc.y, 0.0, 1.0);
@@ -55,10 +99,12 @@ enum ShaderSource {
 
     vertex InkOut ink_vertex(uint vid [[vertex_id]],
                              const device InkVertex* verts [[buffer(0)]],
-                             constant Uniforms& U [[buffer(1)]]) {
+                             constant Uniforms& U [[buffer(1)]],
+                             constant DistortionBlock& D [[buffer(2)]]) {
         InkVertex v = verts[vid];
         InkOut o;
-        o.position = toClip(float2(v.pos), U);
+        float2 pt = float2(v.pos) * U.unitScale + U.center;
+        o.position = ptToClip(distort(pt, D), U);
         o.uh = v.u * v.halfWidth;
         o.h = v.halfWidth;
         o.coreFrac = v.coreFrac;

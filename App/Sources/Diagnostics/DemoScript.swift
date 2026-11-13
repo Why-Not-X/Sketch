@@ -15,16 +15,16 @@ enum DemoScript {
 
     static func startIfRequested(input: TouchInput, size: @escaping () -> (Float, Float)) {
         let args = ProcessInfo.processInfo.arguments
-        let m3 = args.contains("-demo3")
-        guard args.contains("-demo") || m3 else { return }
+        let m3 = args.contains("-demo3"), m4 = args.contains("-demo4")
+        guard args.contains("-demo") || m3 || m4 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             let (w, h) = size()
-            for s in (m3 ? scriptM3(w: w, h: h) : script(w: w, h: h)) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + s.at) {
-                    input.inject(TouchEvent(touchID: s.id, phase: s.phase, kind: .finger,
-                                            timestamp: CACurrentMediaTime(), x: s.x, y: s.y, majorRadius: 12))
-                }
-            }
+            let steps = m4 ? scriptM4(w: w, h: h) : (m3 ? scriptM3(w: w, h: h) : script(w: w, h: h))
+            let t0 = CACurrentMediaTime()
+            input.schedule(steps.map {
+                TouchEvent(touchID: $0.id, phase: $0.phase, kind: .finger, timestamp: t0 + $0.at,
+                           x: $0.x, y: $0.y, majorRadius: 12)
+            })
         }
     }
 
@@ -105,6 +105,65 @@ enum DemoScript {
         out.removeAll { $0.id == 28 && $0.phase == .began && $0.at > 8 }
         stroke(9.4, id: 29, line((w * 0.1, h * 0.95), (w * 0.9, h * 0.95), n: 40), duration: 0.8,         // G15
                pauseAtStep: 20, pause: 0.9)
+        return out
+    }
+
+    /// M4 timeline (`-demo4`), multi-touch injected through the normal input path:
+    ///  0.0 two-finger tap · 0.8 three-finger tap · 1.6 four-finger splash · 2.6 two-finger
+    ///  drag (ribbon) · 3.6 pinch out (ripple) · 4.6 rotate · 5.8 orbit · 7.4 rake ·
+    ///  8.6 three-finger swipe · 9.3 drumming · 10.6 five-finger gather · 12.0 spread
+    private static func scriptM4(w: Float, h: Float) -> [Step] {
+        var out: [Step] = []
+        /// Fingers move from `from[k]` to `to[k]`; `path` (optional) overrides finger k's position at f.
+        func fingers(_ t: Double, ids: [UInt16], from: [(Float, Float)], to: [(Float, Float)], duration: Double,
+                     path: ((Int, Float) -> (Float, Float))? = nil) {
+            for (k, id) in ids.enumerated() { out.append(Step(at: t + Double(k) * 0.015, id: id, phase: .began, x: from[k].0, y: from[k].1)) }
+            let start = t + Double(ids.count) * 0.015
+            let n = max(2, Int(duration * 60))
+            for j in 1...n {
+                let f = Float(j) / Float(n)
+                for (k, id) in ids.enumerated() {
+                    let p = path?(k, f) ?? (from[k].0 + (to[k].0 - from[k].0) * f, from[k].1 + (to[k].1 - from[k].1) * f)
+                    out.append(Step(at: start + duration * Double(f), id: id, phase: j == n ? .ended : .moved, x: p.0, y: p.1))
+                }
+            }
+        }
+        func tapAll(_ t: Double, ids: [UInt16], _ pts: [(Float, Float)]) {
+            fingers(t, ids: ids, from: pts, to: pts, duration: 0.1)
+        }
+        tapAll(0.0, ids: [20, 21], [(w * 0.3, h * 0.15), (w * 0.55, h * 0.15)])                              // G16
+        tapAll(0.8, ids: [20, 21, 22], [(w * 0.4, h * 0.25), (w * 0.6, h * 0.25), (w * 0.5, h * 0.33)])       // G22 tap
+        tapAll(1.6, ids: [20, 21, 22, 23], [(w * 0.35, h * 0.4), (w * 0.45, h * 0.37), (w * 0.55, h * 0.37), (w * 0.65, h * 0.4)]) // G23
+        fingers(2.6, ids: [20, 21], from: [(w * 0.1, h * 0.45), (w * 0.3, h * 0.45)],
+                to: [(w * 0.45, h * 0.6), (w * 0.65, h * 0.57)], duration: 0.7)                                // G17 ribbon
+        fingers(3.6, ids: [20, 21], from: [(w * 0.45, h * 0.52), (w * 0.55, h * 0.52)],
+                to: [(w * 0.25, h * 0.52), (w * 0.75, h * 0.52)], duration: 0.3)                                // G19
+        let rc: (Float, Float) = (w * 0.65, h * 0.72)
+        fingers(4.6, ids: [20, 21], from: [(rc.0 - 60, rc.1), (rc.0 + 60, rc.1)], to: [(0, 0), (0, 0)], duration: 0.7) { k, f in
+            let a = f * 2.1 + (k == 0 ? Float.pi : 0)
+            return (rc.0 + 60 * cos(a), rc.1 + 60 * sin(a))
+        }                                                                                                      // G20
+        let oc: (Float, Float) = (w * 0.3, h * 0.78)
+        out.append(Step(at: 5.8, id: 24, phase: .began, x: oc.0, y: oc.1))                                   // G21 core
+        fingers(6.0, ids: [25], from: [(oc.0 + 70, oc.1)], to: [(0, 0)], duration: 1.0) { _, f in
+            (oc.0 + 70 * cos(f * 2 * .pi), oc.1 + 70 * sin(f * 2 * .pi))
+        }
+        out.append(Step(at: 7.1, id: 24, phase: .ended, x: oc.0, y: oc.1))
+        fingers(7.4, ids: [20, 21, 22], from: [(w * 0.55, h * 0.6), (w * 0.68, h * 0.6), (w * 0.81, h * 0.6)],
+                to: [(w * 0.5, h * 0.92), (w * 0.63, h * 0.92), (w * 0.76, h * 0.92)], duration: 0.9)          // G26 rake
+        fingers(8.6, ids: [20, 21, 22], from: [(w * 0.1, h * 0.2), (w * 0.1, h * 0.26), (w * 0.1, h * 0.32)],
+                to: [(w * 0.6, h * 0.2), (w * 0.6, h * 0.26), (w * 0.6, h * 0.32)], duration: 0.12)             // G22 swipe
+        for k in 0..<6 {                                                                                      // G25
+            let x = k % 2 == 0 ? w * 0.15 : w * 0.35
+            out.append(Step(at: 9.3 + Double(k) * 0.14, id: UInt16(26 + k % 2), phase: .began, x: x, y: h * 0.93))
+            out.append(Step(at: 9.36 + Double(k) * 0.14, id: UInt16(26 + k % 2), phase: .ended, x: x, y: h * 0.93))
+        }
+        let cc: (Float, Float) = (w * 0.5, h * 0.5)
+        let ring = (0..<5).map { k -> Float in Float(k) / 5 * 2 * .pi }
+        fingers(10.6, ids: [20, 21, 22, 23, 24], from: ring.map { (cc.0 + 150 * cos($0), cc.1 + 150 * sin($0)) },
+                to: ring.map { (cc.0 + 40 * cos($0), cc.1 + 40 * sin($0)) }, duration: 0.6)                     // G24 gather
+        fingers(12.0, ids: [20, 21, 22, 23, 24], from: ring.map { (cc.0 + 40 * cos($0), cc.1 + 40 * sin($0)) },
+                to: ring.map { (cc.0 + 150 * cos($0), cc.1 + 150 * sin($0)) }, duration: 0.5)                   // G24 spread
         return out
     }
 }

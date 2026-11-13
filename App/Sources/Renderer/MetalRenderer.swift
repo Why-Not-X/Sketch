@@ -25,12 +25,44 @@ struct Uniforms {
     var sparkleColor: SIMD4<Float>
 }
 
+/// Matches `Distortion` in ShaderSource.swift (32 bytes).
+struct Distortion {
+    var x: Float, y: Float
+    var radius: Float
+    var strength: Float
+    var kind: Float          // 0 ripple, 1 twist, 2 pull, 3 wave
+    var phase: Float
+    var dirX: Float, dirY: Float
+}
+
+/// Matches `DistortionBlock` in ShaderSource.swift: a count and up to 8 distortions.
+struct DistortionBlock {
+    static let capacity = 8
+    var count: UInt32 = 0
+    var pad: (UInt32, UInt32, UInt32) = (0, 0, 0)
+    var d: (Distortion, Distortion, Distortion, Distortion, Distortion, Distortion, Distortion, Distortion) =
+        (.zero, .zero, .zero, .zero, .zero, .zero, .zero, .zero)
+
+    mutating func set(_ list: [Distortion]) {
+        count = UInt32(min(list.count, Self.capacity))
+        withUnsafeMutableBytes(of: &d) { raw in
+            let p = raw.bindMemory(to: Distortion.self)
+            for k in 0..<Int(count) { p[k] = list[k] }
+        }
+    }
+}
+
+extension Distortion {
+    static let zero = Distortion(x: 0, y: 0, radius: 0, strength: 0, kind: 0, phase: 0, dirX: 0, dirY: 0)
+}
+
 /// Everything one frame draws, gathered by the controller.
 struct FrameContent {
     var live: [InkVertex]
     var sprites: [SpriteVertex]
     var effects: [EffectInstance]
     var particleCount: Int
+    var distortions: DistortionBlock
     var time: Float
     var space: InkSpace
     var pixelScale: Float
@@ -134,6 +166,9 @@ final class MetalRenderer {
         var sprite = SpriteVertex(x: 0, y: 0, size: 4, alpha: 1)
         var effect = EffectInstance(x: 4, y: 4, radius: 2, thickness: 1, alpha: 1, shape: 0, r: 1, g: 1, b: 1)
         guard let enc = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
+        var dist = DistortionBlock()
+        dist.set([Distortion(x: 4, y: 4, radius: 8, strength: 0.1, kind: 1, phase: 0, dirX: 1, dirY: 0)])
+        enc.setVertexBytes(&dist, length: MemoryLayout<DistortionBlock>.stride, index: 2)
         enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
         enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
         enc.setRenderPipelineState(inkPipeline)
@@ -181,8 +216,13 @@ final class MetalRenderer {
         committedCount += vertices.count
     }
 
+    /// Frames skipped because the GPU was still busy with earlier ones.
+    private(set) var skippedFrames = 0
+
     func render(drawable: CAMetalDrawable, _ f: FrameContent, presented: @escaping (Double) -> Void) {
-        inflight.wait()
+        // Never block the main thread (where touches arrive) on the GPU: if three
+        // frames are still in flight, skip this one.
+        guard inflight.wait(timeout: .now()) == .success else { skippedFrames += 1; return }
         frameIndex = (frameIndex + 1) % Self.framesInFlight
         let liveBuffer = upload(f.live, into: &liveBuffers[frameIndex])
         let spriteBuffer = upload(f.sprites, into: &spriteBuffers[frameIndex])
@@ -197,8 +237,10 @@ final class MetalRenderer {
         pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.r), green: Double(bg.g), blue: Double(bg.b), alpha: 1)
 
         var u = uniforms(space: f.space, pixelScale: f.pixelScale, time: f.time)
+        var dist = f.distortions
         if let enc = cb.makeRenderCommandEncoder(descriptor: pass) {
             enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            enc.setVertexBytes(&dist, length: MemoryLayout<DistortionBlock>.stride, index: 2)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
 
             enc.setRenderPipelineState(inkPipeline)

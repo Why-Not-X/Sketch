@@ -83,6 +83,10 @@ EFFECTS = {
    "radiusScale":{"source":"size","inMin":40,"inMax":200,"outMin":0.7,"outMax":1.4},
    "intensityScale":{"source":"magnitude","inMin":1.5,"inMax":4,"outMin":0.8,"outMax":1.3,"absolute":True}},
   {"kind":"flash","radius":90,"duration":0.35,"delay":1.0,"intensity":1.2,"color":"sparkle","easing":"linear","condition":"magnitudePositive"},
+  {"kind":"twist","radius":220,"duration":1.2,"intensity":1.4,"condition":"magnitudePositive",
+   "radiusScale":{"source":"size","inMin":40,"inMax":200,"outMin":0.8,"outMax":1.5}},
+  {"kind":"pull","radius":220,"duration":1.2,"intensity":0.45,"condition":"magnitudePositive",
+   "radiusScale":{"source":"size","inMin":40,"inMax":200,"outMin":0.8,"outMax":1.5}},
   {"kind":"vortex","radius":200,"duration":1.4,"count":70,"intensity":1.0,"color":"glow","condition":"magnitudeNegative",
    "radiusScale":{"source":"size","inMin":40,"inMax":200,"outMin":0.8,"outMax":1.6},
    "intensityScale":{"source":"magnitude","inMin":1.5,"inMax":4,"outMin":0.8,"outMax":1.3,"absolute":True}},
@@ -98,10 +102,73 @@ EFFECTS = {
    "radiusScale":{"source":"magnitude","inMin":20,"inMax":300,"outMin":0.4,"outMax":1.6}}],
  "G14": [
   {"kind":"orb","radius":60,"startRadius":45,"intensity":0.9,"color":"glow","persistence":"Ambient"},
-  {"kind":"trail","radius":10,"count":40,"intensity":0.45,"color":"glow","persistence":"Ambient"}],
+  {"kind":"trail","radius":10,"count":40,"intensity":0.45,"color":"glow","persistence":"Ambient"},
+  {"kind":"pull","radius":130,"intensity":0.28,"persistence":"Ambient"}],
  "G15": [
   {"kind":"blot","radius":26,"persistence":"Ambient",
    "radiusScale":{"source":"magnitude","inMin":0.3,"inMax":2.0,"outMin":0.25,"outMax":1.0}}],
+ # --- M4: multi-finger ---
+ "G16": [
+  {"kind":"ring","radius":110,"startRadius":6,"duration":0.7,"thickness":2.5,"intensity":0.9,"color":"glow","easing":"easeOut","at":"eachTouch",
+   "radiusScale":{"source":"size","inMin":30,"inMax":300,"outMin":0.7,"outMax":1.5}},
+  {"kind":"filament","radius":0,"duration":0.8,"thickness":2,"intensity":1.0,"color":"sparkle"}],
+ "G17": [
+  {"kind":"ribbon","radius":0,"intensity":0.3,"persistence":"Ambient"}],
+ "G18": [
+  {"kind":"pull","radius":240,"intensity":0.35,"persistence":"Ambient",
+   "intensityScale":{"source":"magnitude","inMin":1,"inMax":0.3,"outMin":0,"outMax":1}},
+  {"kind":"motesInward","radius":160,"count":30,"intensity":0.6,"color":"sparkle","persistence":"Ambient"},
+  {"kind":"ring","radius":4,"startRadius":140,"duration":0.3,"thickness":3,"intensity":1.0,"color":"sparkle","easing":"easeOut","spawnOn":"end",
+   "intensityScale":{"source":"speed","inMin":50,"inMax":800,"outMin":0.6,"outMax":1.4}},
+  {"kind":"flash","radius":70,"duration":0.25,"delay":0.22,"intensity":1.1,"color":"sparkle","easing":"linear","spawnOn":"end",
+   "intensityScale":{"source":"speed","inMin":50,"inMax":800,"outMin":0.6,"outMax":1.4}}],
+ "G19": [
+  {"kind":"shockwave","radius":320,"startRadius":20,"duration":1.1,"thickness":5,"intensity":0.9,"color":"glow","easing":"fastThenSlow",
+   "radiusScale":{"source":"speed","inMin":50,"inMax":800,"outMin":0.6,"outMax":1.4}},
+  {"kind":"ripple","radius":420,"startRadius":10,"duration":1.4,"intensity":1.0,
+   "radiusScale":{"source":"speed","inMin":50,"inMax":800,"outMin":0.6,"outMax":1.4}}],
+ "G20": [
+  {"kind":"twist","radius":220,"intensity":0.6,"persistence":"Ambient",
+   "radiusScale":{"source":"size","inMin":30,"inMax":200,"outMin":0.8,"outMax":1.6},
+   "intensityScale":{"source":"magnitude","inMin":0,"inMax":3.2,"outMin":0.05,"outMax":1.0,"absolute":True}},
+  {"kind":"orbitSwarm","radius":110,"duration":2.8,"count":36,"intensity":0.8,"color":"sparkle",
+   "radiusScale":{"source":"size","inMin":30,"inMax":200,"outMin":0.6,"outMax":1.4}}],
+ "G21": [
+  {"kind":"orb","radius":34,"startRadius":10,"intensity":0.9,"color":"glow","at":"origin","persistence":"Ambient"},
+  {"kind":"trail","radius":9,"count":50,"intensity":0.55,"color":"sparkle","persistence":"Ambient"},
+  {"kind":"ring","radius":100,"startRadius":100,"duration":2.5,"thickness":3,"intensity":0.8,"color":"glow","easing":"linear","at":"origin","spawnOn":"end",
+   "radiusScale":{"source":"size","inMin":0,"inMax":100,"outMin":0,"outMax":1}},
+  {"kind":"orbitSwarm","radius":100,"duration":3.2,"count":30,"intensity":0.8,"color":"sparkle","at":"origin","spawnOn":"end",
+   "radiusScale":{"source":"size","inMin":0,"inMax":100,"outMin":0,"outMax":1}}],
+ "G22": [
+  {"kind":"ring","radius":100,"startRadius":6,"duration":0.7,"thickness":2.5,"intensity":0.9,"color":"glow","easing":"easeOut","at":"eachTouch","condition":"began"},
+  {"kind":"filament","radius":0,"duration":0.9,"thickness":2,"intensity":1.0,"color":"sparkle","condition":"began"},
+  {"kind":"sweep","radius":0,"duration":0.9,"thickness":6,"intensity":0.9,"color":"glow","condition":"fired"},
+  {"kind":"wave","radius":0,"duration":0.9,"intensity":1.0,"condition":"fired"}],
+ "G23": [
+  {"kind":"flash","radius":1600,"duration":0.35,"intensity":0.22,"color":"glow","easing":"linear"},
+  {"kind":"burst","radius":320,"duration":2.2,"count":80,"intensity":1.1,"color":"sparkle",
+   "radiusScale":{"source":"magnitude","inMin":4,"inMax":5,"outMin":1.0,"outMax":1.3}},
+  {"kind":"shockwave","radius":420,"startRadius":30,"duration":1.2,"thickness":8,"intensity":0.9,"color":"glow","easing":"fastThenSlow",
+   "radiusScale":{"source":"magnitude","inMin":4,"inMax":5,"outMin":1.0,"outMax":1.3}},
+  {"kind":"ripple","radius":700,"startRadius":20,"duration":1.3,"intensity":0.7}],
+ "G24": [
+  {"kind":"pull","radius":3000,"intensity":0.97,"persistence":"Ambient","condition":"magnitudePositive",
+   "intensityScale":{"source":"magnitude","inMin":0,"inMax":1,"outMin":0,"outMax":1}},
+  {"kind":"orb","radius":46,"startRadius":10,"intensity":1.1,"color":"glow","persistence":"Ink","spawnOn":"end",
+   "condition":"magnitudePositive","keySlot":9,"perTouch":False},
+  {"kind":"shockwave","radius":900,"startRadius":20,"duration":1.4,"thickness":10,"intensity":1.0,"color":"glow","easing":"fastThenSlow",
+   "spawnOn":"end","condition":"magnitudeNegative"},
+  {"kind":"burst","radius":500,"duration":2.0,"count":120,"intensity":1.1,"color":"sparkle","spawnOn":"end","condition":"magnitudeNegative"},
+  {"kind":"flash","radius":160,"duration":0.3,"intensity":1.2,"color":"sparkle","easing":"linear",
+   "spawnOn":"end","condition":"magnitudeNegative","keySlot":9,"perTouch":False,"replaces":True}],
+ "G25": [
+  {"kind":"ring","radius":70,"startRadius":5,"duration":0.5,"thickness":2,"intensity":0.8,"color":"glow","easing":"easeOut",
+   "intensityScale":{"source":"tempo","inMin":3,"inMax":12,"outMin":0.7,"outMax":1.5}},
+  {"kind":"arc","radius":4,"duration":0.35,"thickness":1.6,"intensity":1.0,"color":"sparkle",
+   "intensityScale":{"source":"tempo","inMin":3,"inMax":12,"outMin":0.7,"outMax":1.5}}],
+ "G26": [
+  {"kind":"shimmer","radius":3,"count":60,"intensity":0.5,"color":"sparkle","persistence":"Ambient","perTouch":False}],
  "G31": [
   {"kind":"halo","radius":26,"startRadius":8,"duration":0.7,"intensity":0.55,"color":"glow","easing":"easeOut",
    "radiusScale":{"source":"speed","inMin":0,"inMax":2000,"outMin":0.7,"outMax":1.8},

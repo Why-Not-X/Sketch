@@ -91,6 +91,58 @@ Gaps and decisions (please check):
 - **Zigzag:** needs 3 or more corners sharper than about 75°, over at least 60 pt. The first threshold of 100° missed natural hand-drawn zigzags.
 - **Blots:** in one Simulator run, the dwell stroke left two blots (the second one small). The unit trace gives one. It's probably the demo's injected input stalling for more than 300 ms in the slow Simulator, but check it on a device.
 
+## M4 Multi-finger: built and checked with synthetic input; the device check (stop point) is still due
+
+Built:
+- **Sessions:** fingers that land together, or that join resting or holding fingers, form a session of up to five. Session fingers never draw single-finger ink, and every single-finger gesture yields to them (R2). A finger that is already drawing keeps drawing.
+- **Taps, progressively (R1):**
+  - G16: two fingers ripple and pulse a filament between them.
+  - G22: a third finger upgrades to a three-finger tap, with linked ripples in a triangle.
+  - G23: four or five fingers make the palm splash: canvas flash, big burst, shockwave and a screen ripple.
+- **Continuous gestures:** the session locks once a finger moves 12 pt, by whichever motion dominates.
+  - G17: two-finger drag lays down a ribbon (ink, with a translucent fill and bright edges).
+  - G18 pinch in: pulls ink in, then implodes with a flash. G19 pinch out: shockwave plus a water ripple through the ink.
+  - G20 rotate: twists the ink, with orbiting particles.
+  - G21 orbit: the held finger is a glowing core. The circling finger leaves a trail that becomes a ring, and particles keep orbiting afterwards.
+  - G26 rake: one ink line per finger, with shimmer between them, committed as one undo step.
+  - G22 swipe: a quick, fast three-finger rake turns into a wave sweeping across the canvas. The lines it consumed come back with one undo.
+- **G25 drumming:** 4 or more quick taps in 1 s, alternating between spots. Ripples hop between the spots, linked by lightning. It beats G4 rhythm (R2). Multi-finger taps don't count as drum hits.
+- **G24 gather and spread (stretch goal, D5):**
+  - Five fingers closing pull all ink into one orb, and the canvas clears (one undo).
+  - Five fingers opening make a nova and restore the ink exactly.
+- **Ink distortion shader:** ripple, twist, pull and wave displace ink vertices, then let them return to rest. It's used by G18 to G20, G22 and G23, and now also G11's vortex and G14's magnet (closing two M3 gaps).
+- **R8 (system gestures):** the canvas opts out of iPadOS three-finger editing gestures (undo/redo swipe, copy/paste pinch) with `editingInteractionConfiguration = .none`.
+- **Main thread never waits on the GPU:** if three frames are still in flight, the renderer skips a frame instead of blocking the thread touches arrive on.
+
+Ran:
+- **Unit tests:** 116 pass. Every multi-finger gesture has positive and near-miss traces, for example:
+  - a tap held too long, or with a finger sliding
+  - three fingers not splashing
+  - a one-sided pinch versus an orbit
+  - a quick rake with four fingers staying a rake
+  - a small gather cancelled
+  - drumming on the same spot, too slowly, or with multi-finger taps
+
+  There are also mapper tests (tap versus swipe effects, orbit core at the held finger, spread replacing the gathered orb).
+- **Simulator** (iPhone 17 Pro), scripted multi-touch demo (`-demo4`): every gesture from G16 to G26 fired in order with plausible values, confirmed in the debug gesture log. Screenshots checked: ribbon, shockwave, orbit ring, rake, swipe wave with the lines consumed, drumming lightning, and gather clearing then spread restoring the ink.
+
+**Not verified (this is the M4 stop point):**
+- **Real fingers on real hardware:** the Simulator only fakes two touches, so all 3+ finger results come from injected events.
+- **Thresholds:** the lock distance, swipe speed and gather progress are guesses.
+- **Haptics:** the pulse once per orbit revolution, and every other haptic, waits for the haptics layer in M6.
+
+**R8 conflicts expected on a real iPad, untested:**
+- **G22:** the three-finger opt-out is in place, but whether iPadOS honors it everywhere is unknown.
+- **G23 and G24:** four- and five-finger swipes and pinches are iPadOS multitasking gestures (Settings → Multitasking & Gestures). An app can't turn them off. The five-finger pinch will likely swallow G24's gather, which is D5's reason to cut it. Decide after trying it on an iPad.
+- **G30:** screen-edge deferral needs a UIKit view-controller host. Planned for M5 along with G30.
+
+Decisions and deviations (please check):
+- **One shared recognizer for G16–G24 and G26:** they all depend on the same session membership and lock, so they share one session recognizer instead of one recognizer each. G25 is separate.
+- **Rake versus swipe:** both are "three fingers moving together". A three-finger drag starts as a rake. It becomes a swipe if all fingers lift within 350 ms at 600 pt/s or more.
+- **Erasing a ribbon:** a scribble that touches a ribbon removes the whole ribbon rather than splitting it.
+- **Rotation momentum:** G20's "keeps spinning with momentum after release" is approximated. The twist eases out over 1 s and the orbiting particles keep circling for up to 3 s.
+- **Demo playback:** the debug demos now feed their events from the frame loop with scheduled timestamps. Injecting in real time let Simulator main-thread stalls squash taps together, which produced fake holds and missed the swipe.
+
 ## Known issues and deviations
 
 - **Metal Toolchain not installed.** Shaders are compiled at launch from `ShaderSource.swift` (`makeLibrary(source:)`), which adds a few ms during warm-up and nothing on the touch path. To precompile instead, install the toolchain with `xcodebuild -downloadComponent MetalToolchain` (about 700 MB) and move the source back to a `.metal` file.

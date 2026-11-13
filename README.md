@@ -18,6 +18,9 @@ Add a launch argument under Product → Scheme → Edit Scheme… → Run → Ar
 
 - `-demo`: taps, holds, rhythm and a stroke (G1 to G7, G31)
 - `-demo3`: scribble, circle, spiral, zigzag, flick, slingshot, hold-drag and dwell (G8 to G15)
+- `-demo4`: multi-finger, injected (G16 to G26); the Simulator itself can only fake two touches
+
+In debug builds every recognized gesture is also logged (subsystem `TouchWhiteboard`, category `gestures`).
 
 ## Layout
 

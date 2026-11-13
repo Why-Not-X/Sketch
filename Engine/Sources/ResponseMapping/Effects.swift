@@ -41,6 +41,35 @@ public enum EffectKind: String, Codable, CaseIterable, Sendable {
     case trail
     /// G15: an ink blot. Handled by the canvas as ink, not as an effect.
     case blot
+    /// G17: a ribbon of ink between two fingers. Handled by the canvas as ink.
+    case ribbon
+    /// Glowing lines joining the gesture's touch points (closed for 3 or more). G16, G22.
+    case filament
+    /// G22 swipe: a wavefront line that sweeps across the whole canvas in the gesture's direction.
+    case sweep
+    /// G26: faint particles drifting on the segments between the touch points.
+    case shimmer
+    /// Particles circling the point at about `radius`, at `count` particles. G20, G21.
+    case orbitSwarm
+    // Ink distortions. They displace the ink layer temporarily, then let it return (spec: Layers).
+    /// A ring-shaped water ripple expanding from the point to `radius`.
+    case ripple
+    /// Twists ink within `radius` around the point; intensity is the angle in radians.
+    case twist
+    /// Pulls ink within `radius` toward the point; intensity 0...1 is how far.
+    case pull
+    /// A straight wavefront crossing the canvas in the gesture's direction, nudging ink.
+    case wave
+}
+
+/// Where an effect sits.
+public enum EffectAnchor: String, Codable, Sendable {
+    /// The gesture's point (default).
+    case point
+    /// The gesture's origin: the slingshot anchor, the orbit's held finger.
+    case origin
+    /// One copy at every touch point of a multi-finger gesture.
+    case eachTouch
 }
 
 /// When an effect spawns.
@@ -54,6 +83,10 @@ public enum SpawnMoment: String, Codable, Sendable {
 /// Spawns the effect only when the gesture's magnitude has this sign (G11 inward vs outward).
 public enum EffectCondition: String, Codable, Sendable {
     case magnitudePositive, magnitudeNegative
+    /// Only for one-shot (`fired`) events: G22 swipe rather than G22 tap.
+    case fired
+    /// Only for `began` events: G22 tap rather than G22 swipe.
+    case began
 }
 
 public enum Easing: String, Codable, Sendable {
@@ -135,6 +168,10 @@ public struct EffectSpec: Codable, Equatable, Sendable {
     public var perTouch: Bool?
     public var spawnOn: SpawnMoment?
     public var condition: EffectCondition?
+    public var at: EffectAnchor?
+    /// Share a key with another spec of the same gesture, so one can replace the
+    /// other (G24: the spread replaces the gathered orb).
+    public var keySlot: Int?
 
     public init(kind: EffectKind, radius: Float) {
         self.kind = kind
@@ -168,6 +205,10 @@ public struct EffectSpawn: Equatable, Sendable {
     public var magnitude: Float
     public var originX: Float
     public var originY: Float
+    /// The gesture's touch points (x0, y0, x1, y1, ...), for multi-finger effects.
+    public var points: [Float]
+    /// Draw one copy at every point in `points`.
+    public var atEachPoint: Bool
 }
 
 public enum EffectCommand: Equatable, Sendable {
@@ -175,6 +216,8 @@ public enum EffectCommand: Equatable, Sendable {
     case update(key: UInt64, x: Float, y: Float, radius: Float, intensity: Float)
     /// The ambient trigger ended: fade out over `Persistence.ambientReleaseFade`.
     case release(key: UInt64)
+    /// New touch points for a keyed multi-finger effect (G26 shimmer).
+    case updatePoints(key: UInt64, points: [Float])
 }
 
 public struct HapticCommand: Equatable, Sendable {

@@ -14,6 +14,8 @@ public final class GestureEngine {
         self.config = config
         state = EngineState(config: config)
         let ordered: [Recognizer] = [
+            // Multi-finger first (R2).
+            MultiFingerRecognizer(), DrummingRecognizer(),
             TapRecognizer(), DoubleTapRecognizer(), TripleTapRecognizer(), RhythmRecognizer(),
             LongPressRecognizer(), HoldDragRecognizer(), HoldReleaseRecognizer(),
             // These claim a stroke, so they run before G7 on every move.

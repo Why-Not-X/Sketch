@@ -46,6 +46,26 @@ final class TouchInput {
     /// Queues a pre-built event (trace replay for debugging; V4 remote events later).
     func inject(_ e: TouchEvent) { push(e) }
 
+    #if DEBUG
+    /// Scripted events (debug demos), delivered by the frame loop once their time has
+    /// come, with their scheduled timestamps: like real touches, which UIKit delivers
+    /// once per frame, so a busy main thread cannot squash the script's timing.
+    private var scripted: [TouchEvent] = []
+    private var scriptedNext = 0
+
+    func schedule(_ events: [TouchEvent]) {
+        scripted = events.sorted { $0.timestamp < $1.timestamp }
+        scriptedNext = 0
+    }
+
+    func deliverScripted(upTo now: Double) {
+        while scriptedNext < scripted.count && scripted[scriptedNext].timestamp <= now {
+            push(scripted[scriptedNext])
+            scriptedNext += 1
+        }
+    }
+    #endif
+
     private func push(_ e: TouchEvent) {
         guard queue.count < Self.capacity else { droppedEvents += 1; return }
         queue.append(e)

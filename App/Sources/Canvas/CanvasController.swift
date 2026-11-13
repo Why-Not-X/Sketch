@@ -4,6 +4,11 @@ import CoreHaptics
 import GestureEngine
 import InkModel
 import ResponseMapping
+import os
+
+#if DEBUG
+private let gestureLogger = Logger(subsystem: "TouchWhiteboard", category: "gestures")
+#endif
 
 /// Runs the frame loop. Data flows one way:
 /// input (TouchEvents) → gesture engine (GestureEvents) → response mapper
@@ -44,6 +49,18 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
     private var liveBlot = [InkBlot?](repeating: nil, count: 32)            // points
     private var blotKey = [UInt64](repeating: 0, count: 32)
     private var nextStrokeID: UInt32 = 1
+
+    // G17 ribbon (canvas units).
+    private var ribbonA: [InkPoint] = []
+    private var ribbonB: [InkPoint] = []
+    private var ribbonLive = false
+    private var ribbonAlpha: Float = 0.3
+    // G26 rake: its lines are committed together as one undo step.
+    private var rakeMembers = Set<Int>()
+    private var rakeStrokes: [Stroke] = []
+    private var rakeConsumed = false
+    // G24: the ink gathered into the orb, restored by a spread.
+    private var gathered: InkDocument?
 
     // Per-frame scratch, reused.
     private var liveVertices: [InkVertex] = []
@@ -112,7 +129,13 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
 
     /// Reverses the last ink change (D4). The Undo button arrives with M7.
     func undo() {
-        if history.undo() { inkDirty = true }
+        guard history.undo() else { return }
+        inkDirty = true
+        if gathered != nil && !history.document.isEmpty {
+            // The gather was undone: the ink is back, so the orb goes.
+            gathered = nil
+            effects?.apply(.release(key: mapper.keyFor(.g24, slot: 9)), now: CACurrentMediaTime())
+        }
     }
 
     // MARK: Frame
@@ -120,6 +143,9 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
         guard let renderer, let effects else { return }
         frameNow = CACurrentMediaTime()
+        #if DEBUG
+        input.deliverScripted(upTo: frameNow)
+        #endif
 
         var newestRealTouch: Double = 0
         input.drain { e in
@@ -155,6 +181,8 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         liveVertices.removeAll(keepingCapacity: true)
         sprites.removeAll(keepingCapacity: true)
         let theme = mapper.set.theme
+        if ribbonLive { tessellateRibbon(ribbonA, ribbonB, into: &liveVertices) }
+        for stroke in rakeStrokes { tessellate(stroke, into: &liveVertices) }
         for i in 0..<builders.count {
             for b in blots[i] { BlotTessellator.append(b, coreFrac: Self.blotCoreFrac, into: &liveVertices) }
             if let lb = liveBlot[i] { BlotTessellator.append(toUnits(lb), coreFrac: Self.blotCoreFrac, into: &liveVertices) }
@@ -176,6 +204,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         let pendingDowns = latency.takePendingDowns()
         let content = FrameContent(live: liveVertices, sprites: sprites, effects: effectInstances,
                                    particleCount: effects.particleDrawCount,
+                                   distortions: effects.distortionBlock(),
                                    time: effects.gpuTime(frameNow), space: space, pixelScale: pixelScale)
         renderer.render(drawable: update.drawable, content) { [latency] presentedTime in
             latency.framePresented(at: presentedTime, downs: pendingDowns, newestMove: newestRealTouch)
@@ -207,6 +236,37 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
             if g.gesture == .g12 {
                 effects?.pathForNextSpawn = builders[i].points.map { space.toPoints(SIMD2($0.x, $0.y)) }
             }
+        case (.g17, .began):
+            ribbonA.removeAll(); ribbonB.removeAll()
+            ribbonLive = true
+            extendRibbon(g)
+        case (.g17, .changed):
+            extendRibbon(g)
+        case (.g17, .ended), (.g17, .cancelled):
+            commitRibbon()
+        case (.g26, .began):
+            // Each rake finger's points, recorded since touch-down, now show as ink.
+            rakeMembers = Set(g.touchIDs.map(Int.init))
+            rakeStrokes.removeAll()
+            rakeConsumed = false
+            for m in rakeMembers where m < builders.count {
+                drawing[m] = true
+                sparkle[m] = builders[m].head ?? .zero
+            }
+        case (.g22, .fired):
+            rakeConsumed = true   // the quick rake was a swipe: its lines go (one undo brings them back)
+        case (.g24, .ended):
+            if g.magnitude > 0 {
+                if !history.document.isEmpty {
+                    gathered = history.document
+                    history.record { $0.removeAll() }
+                    inkDirty = true
+                }
+            } else if let doc = gathered {
+                history.record { $0 = doc }
+                gathered = nil
+                inkDirty = true
+            }
         default:
             break
         }
@@ -220,6 +280,8 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
     /// Routes visual commands. G15 blots are ink, so they stay on the canvas side.
     private func applyVisual(_ c: EffectCommand, slot: Int?) {
         switch c {
+        case .spawn(let s) where s.kind == .ribbon:
+            ribbonAlpha = s.intensity
         case .spawn(let s) where s.kind == .blot:
             if let i = slot {
                 liveBlot[i] = InkBlot(x: s.x, y: s.y, radius: s.radius)
@@ -262,7 +324,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
             var stroke = b.finish(final: sample)
             if let lb = liveBlot[i] { blots[i].append(toUnits(lb)); liveBlot[i] = nil }
             stroke.blots = blots[i]
-            guard drawing[i], stroke.points.count >= 2 else { return }
+            guard drawing[i], stroke.points.count >= 2 else { finishRakeMember(i, nil); return }
             if let c = snapCircle[i] {
                 // G10: the loop snaps into a clean ring that stays as ink.
                 let center = space.toUnits(x: c.x, y: c.y)
@@ -274,7 +336,9 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
                 ring.blots = stroke.blots
                 stroke = ring
             }
-            if consumed[i] {
+            if rakeMembers.contains(i) {
+                finishRakeMember(i, stroke)
+            } else if consumed[i] {
                 // G8/G12 used the stroke up. It never becomes ink, but one undo brings it back (R3).
                 var withStroke = history.document
                 withStroke.append(stroke)
@@ -285,6 +349,56 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
             }
         case .cancelled:
             b.cancel()
+        }
+    }
+
+    /// G26: collects each rake line; when the last finger lifts, all lines are
+    /// committed (or consumed by a swipe) as one undo step.
+    private func finishRakeMember(_ i: Int, _ stroke: Stroke?) {
+        guard rakeMembers.contains(i) else { return }
+        rakeMembers.remove(i)
+        if let stroke { rakeStrokes.append(stroke) }
+        guard rakeMembers.isEmpty, !rakeStrokes.isEmpty else { return }
+        if rakeConsumed {
+            var withLines = history.document
+            for st in rakeStrokes { withLines.append(st) }
+            history.pushUndoState(withLines)
+        } else {
+            history.record { doc in for st in rakeStrokes { doc.append(st) } }
+            for st in rakeStrokes { tessellate(st, into: &finishedVertices) }
+        }
+        rakeStrokes.removeAll()
+    }
+
+    /// G17: adds the current finger pair to the ribbon when they have moved.
+    private func extendRibbon(_ g: GestureEvent) {
+        let a = space.toUnits(x: g.x, y: g.y), b = space.toUnits(x: g.originX, y: g.originY)
+        let w = brush.baseWidth * 0.6 / space.unit
+        if let last = ribbonA.last, let lastB = ribbonB.last {
+            let moved = max(hypot(a.x - last.x, a.y - last.y), hypot(b.x - lastB.x, b.y - lastB.y)) * space.unit
+            guard moved >= 1.5 else { return }
+        }
+        ribbonA.append(InkPoint(x: a.x, y: a.y, t: g.timestamp, width: w))
+        ribbonB.append(InkPoint(x: b.x, y: b.y, t: g.timestamp, width: w))
+    }
+
+    private func commitRibbon() {
+        ribbonLive = false
+        guard ribbonA.count >= 2 else { return }
+        let ribbon = Stroke(id: nextStrokeID, points: ribbonA, isPencil: false, partner: ribbonB)
+        nextStrokeID &+= 1
+        history.record { $0.append(ribbon) }
+        tessellate(ribbon, into: &finishedVertices)
+        ribbonA.removeAll(); ribbonB.removeAll()
+    }
+
+    private func tessellateRibbon(_ a: [InkPoint], _ b: [InkPoint], into out: inout [InkVertex]) {
+        RibbonTessellator.appendFill(a, b, alpha: ribbonAlpha, into: &out)
+        for edge in [a, b] {
+            StrokeTessellator.append(edge, taperStart: true, taperEnd: true,
+                                     taperLength: brush.taperLength / space.unit,
+                                     taperMinFactor: brush.taperMinFactor,
+                                     glowFactor: brush.glowWidthFactor, into: &out)
         }
     }
 
@@ -314,6 +428,10 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
     }
 
     private func tessellate(_ stroke: Stroke, into out: inout [InkVertex]) {
+        if let partner = stroke.partner {
+            tessellateRibbon(stroke.points, partner, into: &out)
+            return
+        }
         StrokeTessellator.append(stroke.points, taperStart: true, taperEnd: true,
                                  taperLength: brush.taperLength / space.unit,
                                  taperMinFactor: brush.taperMinFactor,
@@ -337,6 +455,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         case .changed: return
         }
         gestureLog.append(g.gesture.rawValue + mark)
+        gestureLogger.notice("\(g.gesture.rawValue, privacy: .public)\(mark, privacy: .public) mag \(g.magnitude, privacy: .public) speed \(Int(g.speed), privacy: .public) n \(g.fingerCount, privacy: .public)")
         if gestureLog.count > 10 { gestureLog.removeFirst() }
         latency.note = "gestures: " + gestureLog.joined(separator: " ")
             + String(format: "\nfx %d  particles %d  undo %@", effects?.liveEffectCount ?? 0,

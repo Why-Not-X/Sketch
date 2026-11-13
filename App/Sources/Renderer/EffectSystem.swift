@@ -52,6 +52,8 @@ final class EffectSystem {
         var path: [SIMD2<Float>] = []
         /// Where the tether was when released, for the snap-back.
         var relX: Float = 0, relY: Float = 0
+        /// Multi-finger touch points, kept current by `.updatePoints`.
+        var points: [Float] = []
     }
 
     private var effects: [Live] = []
@@ -67,6 +69,8 @@ final class EffectSystem {
     var bounds: (w: Float, h: Float) = (0, 0)
     /// Path the next `.arc` spawn follows (set by the canvas just before mapping G12).
     var pathForNextSpawn: [SIMD2<Float>] = []
+    /// Ink distortions active this frame, strongest first (at most 8 reach the GPU).
+    private(set) var distortions: [Distortion] = []
 
     init(theme: Theme, particleBuffer: UnsafeMutableRawPointer, particleCapacity: Int, timeBase: Double) {
         self.theme = theme
@@ -92,14 +96,23 @@ final class EffectSystem {
             if s.key != 0 { effects.removeAll { $0.s.key == s.key } }
             if effects.count >= Self.maxEffects { effects.removeFirst() }   // oldest first (R4)
             var live = Live(s: s, born: now, releasedAt: nil, lastEmit: now, px: s.x, py: s.y)
+            live.points = s.points
             switch s.kind {
             case .burst: spawnBurst(s, now: now)
             case .launch: spawnLaunch(s, now: now)
             case .vortex: spawnVortex(s, now: now)
+            case .orbitSwarm: spawnOrbit(s, now: now)
             case .comet:
                 let v = s.speed * 0.6
                 live.vx = s.directionX * v; live.vy = s.directionY * v
             case .arc:
+                if pathForNextSpawn.isEmpty && (s.originX != 0 || s.originY != 0) {
+                    // G25: a lightning link from the previous tap to this one.
+                    pathForNextSpawn = (0...10).map { k in
+                        let f = Float(k) / 10
+                        return SIMD2(s.originX + (s.x - s.originX) * f, s.originY + (s.y - s.originY) * f)
+                    }
+                }
                 live.path = downsample(pathForNextSpawn, to: 48)
                 pathForNextSpawn.removeAll()
                 spawnArcSparks(live.path, s, now: now)
@@ -111,6 +124,8 @@ final class EffectSystem {
                 effects[i].s.x = x; effects[i].s.y = y
                 effects[i].s.radius = radius; effects[i].s.intensity = intensity
             }
+        case .updatePoints(let key, let points):
+            for i in effects.indices where effects[i].s.key == key { effects[i].points = points }
         case .release(let key):
             for i in effects.indices where effects[i].s.key == key && effects[i].releasedAt == nil {
                 effects[i].releasedAt = now
@@ -145,6 +160,8 @@ final class EffectSystem {
     func frame(now: Double, into out: inout [EffectInstance]) {
         let dt = Float(lastFrame > 0 ? min(0.05, now - lastFrame) : 0)
         lastFrame = now
+        distortions.removeAll(keepingCapacity: true)
+        let diag = (bounds.w * bounds.w + bounds.h * bounds.h).squareRoot()
         var i = 0
         while i < effects.count {
             let e = effects[i]
@@ -168,9 +185,21 @@ final class EffectSystem {
 
             func add(_ x: Float, _ y: Float, _ r: Float, _ th: Float, _ alpha: Float, _ shape: Float,
                      x2: Float = 0, y2: Float = 0) {
+                if s.atEachPoint && e.points.count >= 2 && shape < 3 {
+                    // One copy at every finger (G16, G22 tap).
+                    var k = 0
+                    while k + 1 < e.points.count {
+                        out.append(EffectInstance(x: e.points[k], y: e.points[k + 1], radius: r, thickness: th,
+                                                  alpha: alpha, shape: shape, r: c.r, g: c.g, b: c.b))
+                        k += 2
+                    }
+                    return
+                }
                 out.append(EffectInstance(x: x, y: y, radius: r, thickness: th, alpha: alpha,
                                           shape: shape, r: c.r, g: c.g, b: c.b, x2: x2, y2: y2))
             }
+            /// Timed distortions rise and fall; ambient ones follow their trigger.
+            let envelope: Float = s.duration != nil ? Float(sin(Double.pi * Double(min(1, p)))) : op
 
             switch s.kind {
             case .ring:
@@ -215,10 +244,58 @@ final class EffectSystem {
                 add(s.originX, s.originY, 6, 0, s.intensity, 2)
             case .arc:
                 drawArc(e.path, s, alpha: a, into: &out, color: c)
-            case .burst, .launch, .vortex, .dissolve, .blot:
+            case .filament:
+                // Glowing links between the fingers; closed for three or more. Pulses once.
+                let pulse = a * (0.55 + 0.45 * Float(sin(Double.pi * Double(min(1, p)))))
+                let n = e.points.count / 2
+                if n >= 2 {
+                    let segments = n >= 3 ? n : 1
+                    for k in 0..<segments {
+                        let j = (k + 1) % n
+                        add(e.points[2 * k], e.points[2 * k + 1], 0, s.thickness, pulse, 3,
+                            x2: e.points[2 * j], y2: e.points[2 * j + 1])
+                    }
+                }
+            case .sweep:
+                // A wavefront crossing the whole canvas, perpendicular to the swipe.
+                let dx = s.directionX, dy = s.directionY
+                guard dx != 0 || dy != 0, diag > 0 else { break }
+                let startX = s.x - dx * diag, startY = s.y - dy * diag
+                let travel = 2 * diag * Easing.linear.apply(p)
+                let fx = startX + dx * travel, fy = startY + dy * travel
+                add(fx - dy * diag, fy + dx * diag, 0, s.thickness, a * 0.7, 3, x2: fx + dy * diag, y2: fy - dx * diag)
+            case .shimmer:
+                if e.releasedAt == nil { emitShimmer(index: index, now: now) }
+            case .ripple:
+                distortions.append(Distortion(x: s.x, y: s.y, radius: s.radius, strength: a,
+                                              kind: 0, phase: s.startRadius + (s.radius - s.startRadius) * Easing.easeOut.apply(p),
+                                              dirX: 0, dirY: 0))
+            case .twist:
+                let sign: Float = s.magnitude < 0 ? -1 : 1
+                distortions.append(Distortion(x: s.x, y: s.y, radius: s.radius, strength: sign * s.intensity * envelope,
+                                              kind: 1, phase: 0, dirX: 0, dirY: 0))
+            case .pull:
+                distortions.append(Distortion(x: s.x, y: s.y, radius: s.radius, strength: s.intensity * envelope,
+                                              kind: 2, phase: 0, dirX: 0, dirY: 0))
+            case .wave:
+                let dx = s.directionX, dy = s.directionY
+                guard dx != 0 || dy != 0, diag > 0 else { break }
+                distortions.append(Distortion(x: s.x - dx * diag, y: s.y - dy * diag, radius: 0, strength: a,
+                                              kind: 3, phase: 2 * diag * p, dirX: dx, dirY: dy))
+            case .burst, .launch, .vortex, .orbitSwarm, .dissolve, .blot, .ribbon:
                 break   // particles only, a style holder, or ink handled by the canvas
             }
         }
+    }
+
+    /// Distortions sorted strongest first, capped for the GPU.
+    func distortionBlock() -> DistortionBlock {
+        var block = DistortionBlock()
+        if distortions.count > DistortionBlock.capacity {
+            distortions.sort { abs($0.strength) > abs($1.strength) }
+        }
+        block.set(distortions)
+        return block
     }
 
     // MARK: Effect helpers
@@ -339,6 +416,39 @@ final class EffectSystem {
             emit(Particle(ox: s.x, oy: s.y, vx: r0, vy: Float.random(in: 0..<(2 * .pi)), t0: gpuTime(now),
                           life: life * Float.random(in: 0.75...1), size: Float.random(in: 2.5...5), drag: 1,
                           alpha: s.intensity, r: c.r, g: c.g, b: c.b, mode: 1, p1: r1, p2: spin))
+        }
+    }
+
+    /// G20/G21: particles circling the point.
+    private func spawnOrbit(_ s: EffectSpawn, now: Double) {
+        let life = Float(s.duration ?? 3)
+        let c = theme.color(s.color)
+        let spin: Float = s.tempo != 0 ? max(-8, min(8, s.tempo)) : 2.5
+        for _ in 0..<max(1, s.count) {
+            let r = max(8, s.radius) * Float.random(in: 0.75...1.2)
+            emit(Particle(ox: s.x, oy: s.y, vx: r, vy: Float.random(in: 0..<(2 * .pi)), t0: gpuTime(now),
+                          life: life * Float.random(in: 0.7...1), size: Float.random(in: 2.5...4.5), drag: 1,
+                          alpha: s.intensity, r: c.r, g: c.g, b: c.b, mode: 1, p1: r * 0.9,
+                          p2: spin * Float.random(in: 0.8...1.2)))
+        }
+    }
+
+    /// G26: faint particles on the segments between neighbouring fingers.
+    private func emitShimmer(index: Int, now: Double) {
+        let e = effects[index]
+        let n = e.points.count / 2
+        guard n >= 2 else { return }
+        let rate = Double(max(1, e.s.count))
+        let due = Int((now - e.lastEmit) * rate)
+        guard due > 0 else { return }
+        effects[index].lastEmit += Double(due) / rate
+        let c = theme.color(e.s.color)
+        for _ in 0..<min(due, 8) {
+            let k = Int.random(in: 0..<(n - 1)), f = Float.random(in: 0...1)
+            let x = e.points[2 * k] + (e.points[2 * k + 2] - e.points[2 * k]) * f
+            let y = e.points[2 * k + 1] + (e.points[2 * k + 3] - e.points[2 * k + 1]) * f
+            emit(Particle(ox: x, oy: y, vx: Float.random(in: -8...8), vy: Float.random(in: -8...8), t0: gpuTime(now),
+                          life: 0.5, size: e.s.radius, drag: 1, alpha: e.s.intensity, r: c.r, g: c.g, b: c.b))
         }
     }
 

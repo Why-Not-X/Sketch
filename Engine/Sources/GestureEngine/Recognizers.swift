@@ -96,6 +96,7 @@ final class TripleTapRecognizer: ProvisionalTapRecognizer {
 final class RhythmRecognizer: ProvisionalTapRecognizer {
     init() { super.init(.g4) }
     override func shouldBegin(_ i: Int, _ s: EngineState) -> (Bool, Float, Float) {
+        guard !s.tracks[i].drumming else { return (false, 0, 0) }   // G25 wins (R2)
         let need = s.config.rhythmMinTaps
         let previous = s.recentTapDownTimes(need - 1)
         guard need >= 2, previous.count == need - 1, let first = previous.first else { return (false, 0, 0) }

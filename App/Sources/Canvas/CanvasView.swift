@@ -35,9 +35,7 @@ final class CanvasView: UIView {
         if let window {
             contentScaleFactor = window.screen.scale
             controller.start()
-            #if DEBUG
             DispatchQueue.main.async { [weak self] in self?.becomeFirstResponder() }
-            #endif
         } else {
             controller.stop()
         }
@@ -55,9 +53,13 @@ final class CanvasView: UIView {
         #endif
     }
 
+    // R8: opt out of iPadOS three-finger editing gestures (undo/redo swipe, copy/paste
+    // pinch) so G22 reaches the canvas. Applies while the canvas is first responder.
+    override var editingInteractionConfiguration: UIEditingInteractionConfiguration { .none }
+    override var canBecomeFirstResponder: Bool { true }
+
     #if DEBUG
     // Shake to undo until the Undo button arrives in M7 (Simulator: Device → Shake).
-    override var canBecomeFirstResponder: Bool { true }
     override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
         if motion == .motionShake { controller.undo() }
     }

@@ -142,7 +142,7 @@ final class ResponseMappingTests: XCTestCase {
         let m = ResponseMapper(set: set, hapticsAvailable: true)
         let inward = spawns(collect(m, GestureEvent(gesture: .g11, phase: .fired, timestamp: 0, x: 0, y: 0, magnitude: 2, size: 100)).0)
         let outward = spawns(collect(m, GestureEvent(gesture: .g11, phase: .fired, timestamp: 0, x: 0, y: 0, magnitude: -2, size: 100)).0)
-        XCTAssertEqual(inward.map(\.kind), [.vortex, .flash], "inward ends in a flash")
+        XCTAssertEqual(inward.map(\.kind), [.vortex, .flash, .twist, .pull], "inward ends in a flash and drags ink in")
         XCTAssertEqual(outward.map(\.kind), [.vortex, .ring])
         XCTAssertGreaterThan(inward[0].magnitude, 0)
     }
@@ -159,6 +159,42 @@ final class ResponseMappingTests: XCTestCase {
         let launch = spawns(end)
         XCTAssertEqual(launch.map(\.kind), [.launch])
         XCTAssertGreaterThan(launch[0].radius, set.response(for: .g13)!.effects[1].radius, "a long stretch launches harder")
+    }
+
+    func testEveryM4GestureHasEffects() {
+        for id in [GestureID.g16, .g17, .g18, .g19, .g20, .g21, .g22, .g23, .g24, .g25, .g26] {
+            XCTAssertFalse(set.response(for: id)!.effects.isEmpty, id.rawValue)
+        }
+    }
+
+    func testThreeFingerTapAndSwipeGetDifferentEffects() {
+        let m = ResponseMapper(set: set, hapticsAvailable: true)
+        let pts: [Float] = [0, 0, 50, 0, 25, 40]
+        let tap = spawns(collect(m, GestureEvent(gesture: .g22, phase: .began, timestamp: 0, x: 25, y: 13, touchPoints: pts)).0)
+        let swipe = spawns(collect(m, GestureEvent(gesture: .g22, phase: .fired, timestamp: 0, x: 25, y: 13, directionX: 1)).0)
+        XCTAssertEqual(tap.map(\.kind), [.ring, .filament])
+        XCTAssertTrue(tap[0].atEachPoint, "one ripple per finger")
+        XCTAssertEqual(tap[1].points, pts)
+        XCTAssertEqual(swipe.map(\.kind), [.sweep, .wave])
+    }
+
+    func testOrbitCoreSitsAtTheHeldFinger() {
+        let m = ResponseMapper(set: set, hapticsAvailable: true)
+        let s = spawns(collect(m, GestureEvent(gesture: .g21, phase: .began, timestamp: 0, x: 300, y: 300,
+                                               originX: 200, originY: 310)).0)
+        XCTAssertEqual(s[0].kind, .orb)
+        XCTAssertEqual(s[0].x, 200); XCTAssertEqual(s[0].y, 310)
+        XCTAssertEqual(s[1].x, 300, "the trail follows the orbiting finger")
+    }
+
+    func testSpreadReplacesTheGatheredOrb() {
+        let m = ResponseMapper(set: set, hapticsAvailable: true)
+        let gather = spawns(collect(m, GestureEvent(gesture: .g24, phase: .ended, timestamp: 0, x: 0, y: 0, magnitude: 0.9)).0)
+        let orb = gather.first { $0.kind == .orb }!
+        XCTAssertNil(orb.duration, "the orb stays until the spread")
+        let spread = spawns(collect(m, GestureEvent(gesture: .g24, phase: .ended, timestamp: 1, x: 0, y: 0, magnitude: -0.9, touchID: 3)).0)
+        XCTAssertTrue(spread.contains { $0.key == orb.key && $0.kind == .flash }, "same key: the nova replaces the orb")
+        XCTAssertEqual(m.keyFor(.g24, slot: 9), orb.key)
     }
 
     func testSwappingTheSetChangesTheReaction() {

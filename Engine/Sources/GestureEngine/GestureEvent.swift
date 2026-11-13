@@ -39,11 +39,18 @@ public struct GestureEvent: Codable, Equatable, Sendable {
     /// A second point some gestures carry, such as the slingshot anchor (G13).
     public var originX: Float
     public var originY: Float
+    /// Multi-finger gestures: every finger's position, flattened as x0, y0, x1, y1, ...
+    public var touchPoints: [Float]
+    /// Multi-finger gestures: the touches involved, in the same order as `touchPoints`.
+    public var touchIDs: [UInt16]
 
     public init(gesture: GestureID, phase: GesturePhase, timestamp: Double, x: Float, y: Float,
                 speed: Float = 0, directionX: Float = 0, directionY: Float = 0,
                 fingerCount: UInt8 = 1, magnitude: Float = 0, tempo: Float = 0, touchID: UInt16 = 0,
-                size: Float = 0, originX: Float = 0, originY: Float = 0) {
+                size: Float = 0, originX: Float = 0, originY: Float = 0,
+                touchPoints: [Float] = [], touchIDs: [UInt16] = []) {
+        self.touchPoints = touchPoints
+        self.touchIDs = touchIDs
         self.touchID = touchID
         self.size = size
         self.originX = originX

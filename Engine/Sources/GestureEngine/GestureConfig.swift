@@ -52,6 +52,14 @@ public struct GestureConfig: Codable, Equatable, Sendable {
     public var gatherFingers: Int = 5
     public var drummingMinTaps: Int = 4
     public var drummingWindow: Double = 1.0
+    public var drummingMinSpotDistance: Float = 30      // assumed: "different spots"
+    // All assumed; tune on device with real fingers.
+    public var multiFingerLockDistance: Float = 12      // movement that commits a session to a gesture
+    public var orbitStillMax: Float = 8                 // the held finger of an orbit moves less than this
+    public var swipeMaxDuration: Double = 0.35          // a quick three-finger rake is a swipe (G22)
+    public var swipeMinSpeed: Float = 600
+    public var gatherMinProgress: Float = 0.6           // fraction of the way to a full gather/spread
+    public var gatherFullChange: Float = 0.5            // spread shrinks (or grows) by this fraction at full progress
 
     // Contextual and ambient (G27 to G32)
     public var edgeZone: Float = 20
