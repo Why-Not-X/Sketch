@@ -28,7 +28,7 @@ class ProvisionalTapRecognizer: Recognizer {
 
     override func began(_ i: Int, _ s: EngineState, _ emit: (GestureEvent) -> Void) {
         let tr = s.tracks[i]
-        guard tr.kind == .finger, !tr.multiFinger else { return }
+        guard tr.kind == .finger, !tr.multiFinger, !tr.contextual else { return }
         let (go, magnitude, tempo) = shouldBegin(i, s)
         guard go else { return }
         live[i] = true

@@ -69,6 +69,12 @@ final class M3TraceTests: XCTestCase {
         XCTAssertFalse(out.has(.g31, .fired))
     }
 
+    func testG10NearMissSquareIsNotACircle() {
+        let square: [(Float, Float)] = [(100, 100), (300, 100), (300, 300), (100, 300), (102, 104)]
+        var b = TraceBuilder(); b.path(at: 0, points: square, duration: 1.0)
+        XCTAssertFalse(runTrace(b.events).has(.g10, .fired))
+    }
+
     func testG10NearMissHalfCircle() {
         var b = TraceBuilder(); b.path(at: 0, points: spiralPoints(from: 80, to: 80, turns: 0.5), duration: 0.5)
         XCTAssertFalse(runTrace(b.events).has(.g10, .fired))

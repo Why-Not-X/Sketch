@@ -108,13 +108,33 @@ func zigzagPoints(x: Float = 100, y: Float = 400, width: Float, height: Float, l
 }
 
 /// Runs a trace through a fresh engine, ticking at 120 Hz, and returns every event emitted.
-func runTrace(_ trace: TouchTrace, config: GestureConfig = .default, tail: Double = 0.6) -> [GestureEvent] {
+/// A canvas with one horizontal stroke from (100, 300) to (500, 300), for contextual gestures.
+final class MockInk: InkHitTesting {
+    var y: Float = 300, x0: Float = 100, x1: Float = 500
+    func hitStroke(x: Float, y: Float, radius: Float) -> StrokeHit? {
+        guard x >= x0 - radius, x <= x1 + radius, abs(y - self.y) <= radius else { return nil }
+        let cx = min(x1, max(x0, x))
+        return StrokeHit(strokeID: 7, x: cx, y: self.y, along: cx - x0, length: x1 - x0)
+    }
+    func crossing(x0 ax: Float, y0 ay: Float, x1 bx: Float, y1 by: Float) -> StrokeCrossing? {
+        guard (ay - y) * (by - y) <= 0, ay != by else { return nil }
+        let t = (y - ay) / (by - ay)
+        let x = ax + (bx - ax) * t
+        guard x >= x0, x <= x1 else { return nil }
+        return StrokeCrossing(strokeID: 7, x: x, y: y, dirX: 1, dirY: 0)
+    }
+}
+
+func runTrace(_ trace: TouchTrace, config: GestureConfig = .default, tail: Double = 0.6,
+              ink: InkHitTesting? = nil, canvas: (Float, Float)? = nil, idleCheck: Bool = false) -> [GestureEvent] {
     let data = try! JSONEncoder().encode(trace)
     let events = try! JSONDecoder().decode(TouchTrace.self, from: data)
         .enumerated().sorted { ($0.element.timestamp, $0.offset) < ($1.element.timestamp, $1.offset) }
         .map(\.element)
     guard let first = events.first, let last = events.last else { return [] }
     let engine = GestureEngine(config: config)
+    engine.ink = ink
+    if let canvas { engine.setCanvasSize(width: canvas.0, height: canvas.1) }
     var out: [GestureEvent] = []
     var t = first.timestamp
     var idx = 0
@@ -126,7 +146,8 @@ func runTrace(_ trace: TouchTrace, config: GestureConfig = .default, tail: Doubl
         engine.tick(now: t) { out.append($0) }
         t += 1.0 / 120
     }
-    return out
+    // Idle (G32) is ambient: hide it unless a test asks for it.
+    return idleCheck ? out : out.filter { $0.gesture != .g32 }
 }
 
 extension Array where Element == GestureEvent {

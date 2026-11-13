@@ -30,6 +30,7 @@ enum ShaderSource {
         float4 inkColor;
         float4 glowColor;
         float4 sparkleColor;
+        float4 extra;        // x: dim (1 = full brightness), y: idle shimmer amount (G32)
     };
 
     // Ink distortions (G11, G14, G18, G19, G20, G22, G23, G24): displace ink vertices,
@@ -95,6 +96,7 @@ enum ShaderSource {
         float h;
         float coreFrac;
         float alpha;
+        float along;
     };
 
     vertex InkOut ink_vertex(uint vid [[vertex_id]],
@@ -109,6 +111,7 @@ enum ShaderSource {
         o.h = v.halfWidth;
         o.coreFrac = v.coreFrac;
         o.alpha = v.alpha;
+        o.along = v.along * U.unitScale;
         return o;
     }
 
@@ -121,7 +124,9 @@ enum ShaderSource {
         float g = 1.0 - d;
         g = g * g * U.glowStrength;
         float3 rgb = U.inkColor.rgb * core + U.glowColor.rgb * g * (1.0 - core);
-        return float4(rgb, core) * in.alpha;
+        // G32: ink shimmers softly while idle.
+        float shimmer = 1.0 - U.extra.y * 0.22 * (0.5 + 0.5 * sin(U.time * 1.4 + in.along * 0.045));
+        return float4(rgb * shimmer * U.extra.x, core) * in.alpha;
     }
 
     // MARK: Sprites (stroke-head sparkle)
@@ -151,7 +156,7 @@ enum ShaderSource {
         float core = 1.0 - smoothstep(0.0, 0.22, d);
         float halo = pow(max(0.0, 1.0 - d), 3.0) * 0.55;
         float a = (core + halo) * in.alpha;
-        return float4(U.sparkleColor.rgb * a, a);
+        return float4(U.sparkleColor.rgb * a * U.extra.x, a);
     }
     // MARK: Effects (rings, discs, dots). Instanced quads, additive, in points.
 
@@ -209,7 +214,7 @@ enum ShaderSource {
         return o;
     }
 
-    fragment float4 effect_fragment(EffectOut in [[stage_in]]) {
+    fragment float4 effect_fragment(EffectOut in [[stage_in]], constant Uniforms& U [[buffer(0)]]) {
         float d = length(in.local);
         float a;
         if (in.shape > 2.5) {
@@ -228,7 +233,7 @@ enum ShaderSource {
             a = core + halo;
         }
         a *= in.alpha;
-        return float4(in.color * a, a);
+        return float4(in.color * a * U.extra.x, a);
     }
 
     // MARK: Particles. Analytic motion on the GPU: origin + v * (1 - e^(-drag t)) / drag.
@@ -287,10 +292,11 @@ enum ShaderSource {
         return o;
     }
 
-    fragment float4 particle_fragment(ParticleOut in [[stage_in]], float2 pc [[point_coord]]) {
+    fragment float4 particle_fragment(ParticleOut in [[stage_in]], float2 pc [[point_coord]],
+                                      constant Uniforms& U [[buffer(0)]]) {
         float d = length(pc - 0.5) * 2.0;
         float a = pow(saturate(1.0 - d), 2.0) * in.alpha;
-        return float4(in.color * a, a);
+        return float4(in.color * a * U.extra.x, a);
     }
     """#
 }

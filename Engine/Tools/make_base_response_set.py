@@ -169,6 +169,27 @@ EFFECTS = {
    "intensityScale":{"source":"tempo","inMin":3,"inMax":12,"outMin":0.7,"outMax":1.5}}],
  "G26": [
   {"kind":"shimmer","radius":3,"count":60,"intensity":0.5,"color":"sparkle","persistence":"Ambient","perTouch":False}],
+ # --- M5: contextual and idle ---
+ "G27": [
+  {"kind":"pluck","radius":7,"duration":1.0,"thickness":2.5,"intensity":1.0,"color":"glow",
+   "durationScale":{"source":"magnitude","inMin":50,"inMax":800,"outMin":0.6,"outMax":1.8}},
+  {"kind":"dot","radius":6,"duration":0.3,"intensity":1.0,"color":"sparkle"}],
+ "G28": [
+  {"kind":"crossSparks","radius":55,"duration":0.45,"count":16,"intensity":1.0,"color":"sparkle",
+   "intensityScale":{"source":"speed","inMin":200,"inMax":2000,"outMin":0.7,"outMax":1.4}},
+  {"kind":"ripple","radius":90,"startRadius":2,"duration":0.5,"intensity":0.6}],
+ "G29": [
+  {"kind":"fill","radius":0,"intensity":0.16},
+  {"kind":"halo","radius":160,"startRadius":10,"duration":0.55,"intensity":0.9,"color":"glow","easing":"easeOut",
+   "radiusScale":{"source":"size","inMin":50,"inMax":400,"outMin":0.6,"outMax":2.5},
+   "intensityScale":{"source":"speed","inMin":100,"inMax":1500,"outMin":0.7,"outMax":1.3}},
+  {"kind":"pulse","radius":40,"startRadius":8,"duration":3.0,"thickness":2,"intensity":0.35,"color":"glow","at":"origin","persistence":"Medium"}],
+ "G30": [
+  {"kind":"bumper","radius":90,"duration":0.6,"thickness":5,"intensity":1.0,"color":"glow"},
+  {"kind":"sweep","radius":280,"duration":0.7,"thickness":4,"intensity":0.6,"color":"glow"},
+  {"kind":"wave","radius":280,"duration":0.7,"intensity":0.8}],
+ "G32": [
+  {"kind":"drift","radius":0,"count":5,"intensity":0.35,"color":"sparkle","persistence":"Ambient","perTouch":False}],
  "G31": [
   {"kind":"halo","radius":26,"startRadius":8,"duration":0.7,"intensity":0.55,"color":"glow","easing":"easeOut",
    "radiusScale":{"source":"speed","inMin":0,"inMax":2000,"outMin":0.7,"outMax":1.8},

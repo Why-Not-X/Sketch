@@ -102,6 +102,10 @@ final class EffectSystem {
             case .launch: spawnLaunch(s, now: now)
             case .vortex: spawnVortex(s, now: now)
             case .orbitSwarm: spawnOrbit(s, now: now)
+            case .crossSparks: spawnCrossSparks(s, now: now)
+            case .pluck:
+                live.path = downsample(pathForNextSpawn, to: 64)
+                pathForNextSpawn.removeAll()
             case .comet:
                 let v = s.speed * 0.6
                 live.vx = s.directionX * v; live.vy = s.directionY * v
@@ -257,13 +261,25 @@ final class EffectSystem {
                     }
                 }
             case .sweep:
-                // A wavefront crossing the whole canvas, perpendicular to the swipe.
+                // A wavefront perpendicular to the direction: across the whole canvas
+                // (G22), or a short one pushing in from the point (G30, radius > 0).
                 let dx = s.directionX, dy = s.directionY
                 guard dx != 0 || dy != 0, diag > 0 else { break }
-                let startX = s.x - dx * diag, startY = s.y - dy * diag
-                let travel = 2 * diag * Easing.linear.apply(p)
+                let local = s.radius > 0
+                let startX = local ? s.x : s.x - dx * diag, startY = local ? s.y : s.y - dy * diag
+                let travel = (local ? s.radius : 2 * diag) * Easing.easeOut.apply(p)
+                let half = local ? s.radius * 0.8 : diag
                 let fx = startX + dx * travel, fy = startY + dy * travel
-                add(fx - dy * diag, fy + dx * diag, 0, s.thickness, a * 0.7, 3, x2: fx + dy * diag, y2: fy - dx * diag)
+                add(fx - dy * half, fy + dx * half, 0, s.thickness, a * 0.7, 3, x2: fx + dy * half, y2: fy - dx * half)
+            case .bumper:
+                // A glowing bar along the edge, centered on the touch.
+                let tx = -s.directionY, ty = s.directionX
+                add(s.x - tx * s.radius, s.y - ty * s.radius, 0, s.thickness * (1 + p), a, 3,
+                    x2: s.x + tx * s.radius, y2: s.y + ty * s.radius)
+            case .drift:
+                if e.releasedAt == nil { emitDrift(index: index, now: now) }
+            case .pluck:
+                drawPluck(e.path, s, age: Float(age), life: Float(s.duration ?? 1), alpha: a, into: &out, color: c)
             case .shimmer:
                 if e.releasedAt == nil { emitShimmer(index: index, now: now) }
             case .ripple:
@@ -280,9 +296,14 @@ final class EffectSystem {
             case .wave:
                 let dx = s.directionX, dy = s.directionY
                 guard dx != 0 || dy != 0, diag > 0 else { break }
-                distortions.append(Distortion(x: s.x - dx * diag, y: s.y - dy * diag, radius: 0, strength: a,
-                                              kind: 3, phase: 2 * diag * p, dirX: dx, dirY: dy))
-            case .burst, .launch, .vortex, .orbitSwarm, .dissolve, .blot, .ribbon:
+                if s.radius > 0 {
+                    distortions.append(Distortion(x: s.x, y: s.y, radius: 0, strength: a,
+                                                  kind: 3, phase: s.radius * Easing.easeOut.apply(p), dirX: dx, dirY: dy))
+                } else {
+                    distortions.append(Distortion(x: s.x - dx * diag, y: s.y - dy * diag, radius: 0, strength: a,
+                                                  kind: 3, phase: 2 * diag * p, dirX: dx, dirY: dy))
+                }
+            case .burst, .launch, .vortex, .orbitSwarm, .crossSparks, .dissolve, .blot, .ribbon, .fill:
                 break   // particles only, a style holder, or ink handled by the canvas
             }
         }
@@ -416,6 +437,77 @@ final class EffectSystem {
             emit(Particle(ox: s.x, oy: s.y, vx: r0, vy: Float.random(in: 0..<(2 * .pi)), t0: gpuTime(now),
                           life: life * Float.random(in: 0.75...1), size: Float.random(in: 2.5...5), drag: 1,
                           alpha: s.intensity, r: c.r, g: c.g, b: c.b, mode: 1, p1: r1, p2: spin))
+        }
+    }
+
+    /// G27: the stroke vibrates as a standing wave that decays, while two glows run
+    /// from the touch point toward both ends.
+    private func drawPluck(_ path: [SIMD2<Float>], _ s: EffectSpawn, age: Float, life: Float, alpha: Float,
+                           into out: inout [EffectInstance], color c: RGBA) {
+        guard path.count >= 2 else { return }
+        var cum: [Float] = [0]
+        cum.reserveCapacity(path.count)
+        for k in 1..<path.count { cum.append(cum[k - 1] + hypot(path[k].x - path[k - 1].x, path[k].y - path[k - 1].y)) }
+        let total = max(1, cum[cum.count - 1])
+        let amp = s.radius * exp(-3 * age / life) * sin(2 * .pi * 7 * age)
+        func displaced(_ k: Int) -> SIMD2<Float> {
+            let a = path[max(0, k - 1)], b = path[min(path.count - 1, k + 1)]
+            let d = b - a
+            let len = max(1e-3, (d.x * d.x + d.y * d.y).squareRoot())
+            let off = amp * sin(.pi * cum[k] / total)
+            return path[k] + SIMD2(-d.y / len, d.x / len) * off
+        }
+        var prev = displaced(0)
+        for k in 1..<path.count {
+            let q = displaced(k)
+            out.append(EffectInstance(x: prev.x, y: prev.y, radius: 0, thickness: s.thickness, alpha: alpha * 0.6,
+                                      shape: 3, r: c.r, g: c.g, b: c.b, x2: q.x, y2: q.y))
+            prev = q
+        }
+        // Glows travelling both ways from the touch point.
+        let travel = total * min(1, age / (life * 0.6))
+        for target in [s.size - travel, s.size + travel] where target >= 0 && target <= total {
+            var k = 1
+            while k < cum.count - 1 && cum[k] < target { k += 1 }
+            let f = (target - cum[k - 1]) / max(1e-3, cum[k] - cum[k - 1])
+            let p = path[k - 1] + (path[k] - path[k - 1]) * f
+            out.append(EffectInstance(x: p.x, y: p.y, radius: 6, thickness: 0, alpha: alpha, shape: 2, r: c.r, g: c.g, b: c.b))
+        }
+    }
+
+    /// G28: sparks fly off along both strokes, in both senses of each direction.
+    private func spawnCrossSparks(_ s: EffectSpawn, now: Double) {
+        let life = Float(s.duration ?? 0.45)
+        let c = theme.color(s.color)
+        let dirs = [(s.directionX, s.directionY), (-s.directionX, -s.directionY),
+                    (s.originX, s.originY), (-s.originX, -s.originY)]
+        let drag: Float = 4
+        let reach = drag / (1 - exp(-drag * life))
+        for k in 0..<max(1, s.count) {
+            let d = dirs[k % 4]
+            let base = atan2(d.1, d.0) + Float.random(in: -0.25...0.25)
+            let v = s.radius * reach * Float.random(in: 0.5...1.1)
+            emit(Particle(ox: s.x, oy: s.y, vx: cos(base) * v, vy: sin(base) * v, t0: gpuTime(now),
+                          life: life * Float.random(in: 0.7...1), size: Float.random(in: 2...3.5), drag: drag,
+                          alpha: s.intensity, r: c.r, g: c.g, b: c.b))
+        }
+    }
+
+    /// G32: slow motes, mostly anywhere, some near the last touch.
+    private func emitDrift(index: Int, now: Double) {
+        let s = effects[index].s
+        let rate = Double(max(1, s.count))
+        let due = Int((now - effects[index].lastEmit) * rate)
+        guard due > 0, bounds.w > 0 else { return }
+        effects[index].lastEmit += Double(due) / rate
+        let c = theme.color(s.color)
+        for _ in 0..<min(due, 4) {
+            let near = Float.random(in: 0...1) < 0.4
+            let x = near ? s.x + Float.random(in: -150...150) : Float.random(in: 0...bounds.w)
+            let y = near ? s.y + Float.random(in: -150...150) : Float.random(in: 0...bounds.h)
+            emit(Particle(ox: x, oy: y, vx: Float.random(in: -6...6), vy: Float.random(in: -12 ... -3), t0: gpuTime(now),
+                          life: Float.random(in: 3...5), size: Float.random(in: 2...4), drag: 0.05,
+                          alpha: s.intensity, r: c.r, g: c.g, b: c.b))
         }
     }
 

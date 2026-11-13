@@ -43,12 +43,15 @@ public struct GestureEvent: Codable, Equatable, Sendable {
     public var touchPoints: [Float]
     /// Multi-finger gestures: the touches involved, in the same order as `touchPoints`.
     public var touchIDs: [UInt16]
+    /// Contextual gestures: the stroke involved (G27, G28), or 0.
+    public var targetID: UInt32
 
     public init(gesture: GestureID, phase: GesturePhase, timestamp: Double, x: Float, y: Float,
                 speed: Float = 0, directionX: Float = 0, directionY: Float = 0,
                 fingerCount: UInt8 = 1, magnitude: Float = 0, tempo: Float = 0, touchID: UInt16 = 0,
                 size: Float = 0, originX: Float = 0, originY: Float = 0,
-                touchPoints: [Float] = [], touchIDs: [UInt16] = []) {
+                touchPoints: [Float] = [], touchIDs: [UInt16] = [], targetID: UInt32 = 0) {
+        self.targetID = targetID
         self.touchPoints = touchPoints
         self.touchIDs = touchIDs
         self.touchID = touchID
@@ -91,4 +94,37 @@ extension GestureID {
 /// Layers talk through small protocols so any one can be replaced or mocked.
 public protocol GestureEventSink: AnyObject {
     func handle(_ event: GestureEvent)
+}
+
+// MARK: - Ink hit-testing
+
+/// Where a touch landed on existing ink (G27).
+public struct StrokeHit: Equatable, Sendable {
+    public var strokeID: UInt32
+    /// Closest point on the stroke, in view points.
+    public var x: Float, y: Float
+    /// Distance from the stroke's start to that point, and the stroke's total length (points).
+    public var along: Float
+    public var length: Float
+    public init(strokeID: UInt32, x: Float, y: Float, along: Float, length: Float) {
+        self.strokeID = strokeID; self.x = x; self.y = y; self.along = along; self.length = length
+    }
+}
+
+/// Where a new stroke segment crosses existing ink (G28).
+public struct StrokeCrossing: Equatable, Sendable {
+    public var strokeID: UInt32
+    public var x: Float, y: Float
+    /// Unit direction of the older stroke at the crossing.
+    public var dirX: Float, dirY: Float
+    public init(strokeID: UInt32, x: Float, y: Float, dirX: Float, dirY: Float) {
+        self.strokeID = strokeID; self.x = x; self.y = y; self.dirX = dirX; self.dirY = dirY
+    }
+}
+
+/// The canvas answers questions about committed ink, so contextual recognizers can
+/// stay free of UIKit and of the ink model. All values are in view points.
+public protocol InkHitTesting: AnyObject {
+    func hitStroke(x: Float, y: Float, radius: Float) -> StrokeHit?
+    func crossing(x0: Float, y0: Float, x1: Float, y1: Float) -> StrokeCrossing?
 }

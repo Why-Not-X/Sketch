@@ -38,9 +38,13 @@ public struct Stroke: Codable, Equatable, Sendable {
     /// G17 ribbon: the second edge, one point per point of `points`. The space between
     /// the two edges is filled.
     public var partner: [InkPoint]?
+    /// G29: the stroke closes a shape whose inside is filled.
+    public var filled: Bool
 
-    public init(id: UInt32, points: [InkPoint], isPencil: Bool, blots: [InkBlot] = [], partner: [InkPoint]? = nil) {
-        self.id = id; self.points = points; self.isPencil = isPencil; self.blots = blots; self.partner = partner
+    public init(id: UInt32, points: [InkPoint], isPencil: Bool, blots: [InkBlot] = [],
+                partner: [InkPoint]? = nil, filled: Bool = false) {
+        self.id = id; self.points = points; self.isPencil = isPencil; self.blots = blots
+        self.partner = partner; self.filled = filled
     }
 
     public var isRibbon: Bool { partner != nil }
@@ -162,7 +166,9 @@ extension Stroke {
 /// Undo history (D4, R3). Every change to ink goes through `record`, so a wrong
 /// guess by an after-the-fact gesture costs exactly one undo.
 public struct InkHistory: Sendable {
-    public private(set) var document = InkDocument()
+    public private(set) var document = InkDocument() { didSet { version &+= 1 } }
+    /// Changes every time the document does (for caches such as the hit-test index).
+    public private(set) var version: UInt64 = 0
     private var undoStack: [InkDocument] = []
     public let limit: Int
 

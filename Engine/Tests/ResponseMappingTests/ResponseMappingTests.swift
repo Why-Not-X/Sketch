@@ -197,6 +197,26 @@ final class ResponseMappingTests: XCTestCase {
         XCTAssertEqual(m.keyFor(.g24, slot: 9), orb.key)
     }
 
+    func testEveryGestureNowHasEffects() {
+        // G7 is drawn by the ink layer itself; every other gesture has a recipe.
+        for id in GestureID.allCases where id != .g7 {
+            XCTAssertFalse(set.response(for: id)!.effects.isEmpty, id.rawValue)
+        }
+    }
+
+    func testLongerStrokeRingsLonger() {
+        let m = ResponseMapper(set: set, hapticsAvailable: true)
+        func ring(_ length: Float) -> Double {
+            spawns(collect(m, GestureEvent(gesture: .g27, phase: .began, timestamp: 0, x: 0, y: 0,
+                                           magnitude: length, size: 10, targetID: 4)).0)[0].duration!
+        }
+        XCTAssertGreaterThan(ring(700), ring(80), "stroke length sets ring time")
+        let pluck = spawns(collect(m, GestureEvent(gesture: .g27, phase: .began, timestamp: 0, x: 0, y: 0,
+                                                   magnitude: 300, size: 120)).0)[0]
+        XCTAssertEqual(pluck.kind, .pluck)
+        XCTAssertEqual(pluck.size, 120, "carries the distance along the stroke")
+    }
+
     func testSwappingTheSetChangesTheReaction() {
         var custom = set
         custom.responses["G1"]!.effects[0].radius = 40

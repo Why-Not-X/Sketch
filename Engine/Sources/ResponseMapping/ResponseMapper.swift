@@ -141,7 +141,9 @@ public final class ResponseMapper {
             x: x, y: y,
             radius: r,
             startRadius: (spec.startRadius ?? 0) * scale,
-            duration: spec.duration ?? p.fadeDuration,
+            duration: (spec.duration ?? p.fadeDuration).map { d in
+                d * Double(spec.durationScale.map { $0.factor(for: value($0.source, e)) } ?? 1)
+            },
             delay: spec.delay ?? 0,
             thickness: spec.thickness ?? 3,
             intensity: intensity(spec, e, boost: boost),
@@ -153,6 +155,7 @@ public final class ResponseMapper {
             directionX: e.directionX, directionY: e.directionY,
             speed: e.speed,
             magnitude: e.magnitude,
+            size: e.size,
             originX: e.originX, originY: e.originY,
             points: e.touchPoints,
             atEachPoint: spec.at == .eachTouch

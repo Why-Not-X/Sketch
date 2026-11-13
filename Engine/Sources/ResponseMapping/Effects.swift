@@ -59,7 +59,19 @@ public enum EffectKind: String, Codable, CaseIterable, Sendable {
     /// Pulls ink within `radius` toward the point; intensity 0...1 is how far.
     case pull
     /// A straight wavefront crossing the canvas in the gesture's direction, nudging ink.
+    /// With a radius, it starts at the point and travels only that far (G30).
     case wave
+    /// G27: the touched stroke vibrates like a plucked string while glows run both ways
+    /// from the touch point. The canvas supplies the stroke's path.
+    case pluck
+    /// G28: sparks flying off along both strokes' directions at a crossing.
+    case crossSparks
+    /// G29: the fill of a closed shape. Handled by the canvas as ink.
+    case fill
+    /// G30: a glowing bar along the touched edge, like a bumper.
+    case bumper
+    /// G32: faint motes drifting slowly over the canvas, emitted at `count` per second.
+    case drift
 }
 
 /// Where an effect sits.
@@ -160,6 +172,8 @@ public struct EffectSpec: Codable, Equatable, Sendable {
     public var persistence: Persistence?
     public var radiusScale: ScaleRule?
     public var intensityScale: ScaleRule?
+    /// Scales the effect's duration (G27: stroke length sets ring time).
+    public var durationScale: ScaleRule?
     public var trail: TrailRule?
     /// Spawning replaces any live effect from the same gesture and slot (G4: tapping
     /// elsewhere moves the pulse). Ambient effects are always keyed.
@@ -203,6 +217,8 @@ public struct EffectSpawn: Equatable, Sendable {
     public var directionY: Float
     public var speed: Float
     public var magnitude: Float
+    /// The gesture's size (G27: distance along the stroke).
+    public var size: Float
     public var originX: Float
     public var originY: Float
     /// The gesture's touch points (x0, y0, x1, y1, ...), for multi-finger effects.

@@ -63,6 +63,11 @@ public struct GestureConfig: Codable, Equatable, Sendable {
 
     // Contextual and ambient (G27 to G32)
     public var edgeZone: Float = 20
+    public var strokeHitRadius: Float = 16              // assumed: how close a tap must land to ink
+    public var crossingSpacing: Float = 18              // assumed: min travel between two G28 crossings
+    public var closeShapeMaxGap: Float = 28             // assumed: end within this of the start
+    public var closeShapeMinLength: Float = 150         // assumed
+    public var closeShapeMinArea: Float = 2500          // assumed, square points
     public var idleDelay: Double = 5
     public var idleDimAfter: Double = 30
 

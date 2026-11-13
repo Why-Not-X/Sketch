@@ -12,7 +12,7 @@ struct SpriteVertex {
     var alpha: Float
 }
 
-/// Matches `Uniforms` in ShaderSource.swift (80 bytes).
+/// Matches `Uniforms` in ShaderSource.swift (96 bytes).
 struct Uniforms {
     var viewSize: SIMD2<Float>
     var center: SIMD2<Float>
@@ -23,6 +23,8 @@ struct Uniforms {
     var inkColor: SIMD4<Float>
     var glowColor: SIMD4<Float>
     var sparkleColor: SIMD4<Float>
+    /// x: dim (1 = full brightness), y: idle shimmer amount.
+    var extra: SIMD4<Float> = SIMD4(1, 0, 0, 0)
 }
 
 /// Matches `Distortion` in ShaderSource.swift (32 bytes).
@@ -64,6 +66,9 @@ struct FrameContent {
     var particleCount: Int
     var distortions: DistortionBlock
     var time: Float
+    /// G32: overall brightness and ink shimmer.
+    var dim: Float = 1
+    var shimmer: Float = 0
     var space: InkSpace
     var pixelScale: Float
 }
@@ -234,9 +239,12 @@ final class MetalRenderer {
         pass.colorAttachments[0].texture = drawable.texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.r), green: Double(bg.g), blue: Double(bg.b), alpha: 1)
+        let dim = Double(f.dim)
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.r) * dim, green: Double(bg.g) * dim,
+                                                            blue: Double(bg.b) * dim, alpha: 1)
 
         var u = uniforms(space: f.space, pixelScale: f.pixelScale, time: f.time)
+        u.extra = SIMD4(f.dim, f.shimmer, 0, 0)
         var dist = f.distortions
         if let enc = cb.makeRenderCommandEncoder(descriptor: pass) {
             enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)

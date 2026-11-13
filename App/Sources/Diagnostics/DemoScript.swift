@@ -15,11 +15,12 @@ enum DemoScript {
 
     static func startIfRequested(input: TouchInput, size: @escaping () -> (Float, Float)) {
         let args = ProcessInfo.processInfo.arguments
-        let m3 = args.contains("-demo3"), m4 = args.contains("-demo4")
-        guard args.contains("-demo") || m3 || m4 else { return }
+        let m3 = args.contains("-demo3"), m4 = args.contains("-demo4"), m5 = args.contains("-demo5")
+        guard args.contains("-demo") || m3 || m4 || m5 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             let (w, h) = size()
-            let steps = m4 ? scriptM4(w: w, h: h) : (m3 ? scriptM3(w: w, h: h) : script(w: w, h: h))
+            let steps = m5 ? scriptM5(w: w, h: h)
+                : m4 ? scriptM4(w: w, h: h) : (m3 ? scriptM3(w: w, h: h) : script(w: w, h: h))
             let t0 = CACurrentMediaTime()
             input.schedule(steps.map {
                 TouchEvent(touchID: $0.id, phase: $0.phase, kind: .finger, timestamp: t0 + $0.at,
@@ -164,6 +165,41 @@ enum DemoScript {
                 to: ring.map { (cc.0 + 40 * cos($0), cc.1 + 40 * sin($0)) }, duration: 0.6)                     // G24 gather
         fingers(12.0, ids: [20, 21, 22, 23, 24], from: ring.map { (cc.0 + 40 * cos($0), cc.1 + 40 * sin($0)) },
                 to: ring.map { (cc.0 + 150 * cos($0), cc.1 + 150 * sin($0)) }, duration: 0.5)                   // G24 spread
+        return out
+    }
+
+    /// M5 timeline (`-demo5`): 0.0 line · 0.8 tap on it (G27) · 1.8 stroke across it
+    /// (G28) · 2.8 closed square (G29) · 4.6 left-edge touch, 5.2 bottom-edge touch
+    /// (G30) · then quiet: idle (G32) from about 10 s, dimming after 40 s · 44 s a tap wakes it.
+    private static func scriptM5(w: Float, h: Float) -> [Step] {
+        var out: [Step] = []
+        func stroke(_ t: Double, id: UInt16, _ pts: [(Float, Float)], duration: Double, n: Int = 40) {
+            var lengths: [Float] = [0]
+            for k in 1..<pts.count { lengths.append(lengths[k - 1] + hypot(pts[k].0 - pts[k - 1].0, pts[k].1 - pts[k - 1].1)) }
+            let total = lengths.last!
+            for j in 0...n {
+                let d = Float(j) / Float(n) * total
+                var k = 1
+                while k < lengths.count - 1 && lengths[k] < d { k += 1 }
+                let f = (d - lengths[k - 1]) / max(1e-3, lengths[k] - lengths[k - 1])
+                let x = pts[k - 1].0 + (pts[k].0 - pts[k - 1].0) * f, y = pts[k - 1].1 + (pts[k].1 - pts[k - 1].1) * f
+                out.append(Step(at: t + duration * Double(j) / Double(n), id: id,
+                                phase: j == 0 ? .began : (j == n ? .ended : .moved), x: x, y: y))
+            }
+        }
+        func tap(_ t: Double, _ x: Float, _ y: Float, id: UInt16 = 21) {
+            out.append(Step(at: t, id: id, phase: .began, x: x, y: y))
+            out.append(Step(at: t + 0.08, id: id, phase: .ended, x: x, y: y))
+        }
+        stroke(0.0, id: 20, [(w * 0.1, h * 0.3), (w * 0.9, h * 0.3)], duration: 0.5)                      // G7
+        tap(0.8, w * 0.35, h * 0.3 + 4)                                                                   // G27
+        stroke(1.8, id: 22, [(w * 0.65, h * 0.18), (w * 0.62, h * 0.45)], duration: 0.4)                  // G28
+        let sq: [(Float, Float)] = [(w * 0.2, h * 0.55), (w * 0.8, h * 0.55), (w * 0.8, h * 0.8),
+                                    (w * 0.2, h * 0.8), (w * 0.2 + 3, h * 0.55 + 4)]
+        stroke(2.8, id: 23, sq, duration: 1.2, n: 80)                                                     // G29
+        tap(4.6, 6, h * 0.45)                                                                             // G30 left
+        tap(5.2, w * 0.5, h - 6)                                                                          // G30 bottom
+        tap(44.0, w * 0.5, h * 0.9)                                                                       // wakes G32
         return out
     }
 }

@@ -143,6 +143,47 @@ Decisions and deviations (please check):
 - **Rotation momentum:** G20's "keeps spinning with momentum after release" is approximated. The twist eases out over 1 s and the orbiting particles keep circling for up to 3 s.
 - **Demo playback:** the debug demos now feed their events from the frame loop with scheduled timestamps. Injecting in real time let Simulator main-thread stalls squash taps together, which produced fake holds and missed the swipe.
 
+## M5 Contextual: done in unit tests and the Simulator, not yet on a device
+
+Built:
+- **Ink hit-testing:** the engine asks a small `InkHitTesting` protocol whether a point lands on ink, or a segment crosses it. The canvas answers from the ink model, with per-stroke bounds cached and rebuilt whenever the undo history's version changes.
+- **G27 touch a stroke:**
+  - A tap on ink begins on touch-down (R1) and outranks the tap family (R2).
+  - The stroke vibrates like a plucked string, decaying, while two glows run from the touch point toward both ends. A longer stroke rings longer.
+  - Dragging off the stroke cancels it and draws normally.
+- **G28 cross a stroke:** a stroke being drawn fires at each crossing with existing ink. Sparks fly along both strokes and a small ripple runs through the ink.
+- **G29 close a shape:** a stroke that ends on its own start, isn't circle-like, and encloses enough area is filled with translucent ink (ear-clipped, one undo with its outline). A glow floods out from the closing point and a faint pulse marks the center. Circles now need to be corner-free, so a square is G29, not G10.
+- **G30 edge touch:**
+  - A touch within 20 pt of an edge makes a glowing bumper along that edge, with a short wave pushing inward and nudging ink.
+  - The touch can still draw afterwards.
+- **G32 idle:**
+  - After 5 s with no touch, motes drift slowly and the ink shimmers. Everything dims to 35% after about 30 s.
+  - The frame rate drops to 30 Hz. Any touch restores 120 Hz from touchesBegan itself, before the next frame.
+- **R8:** the app now runs on a UIKit scene whose root view controller defers all screen-edge system gestures and hides the home indicator. SwiftUI chrome for M7 will sit on top as a child.
+
+Ran:
+- **Unit tests:** 139 pass. Positive and near-miss traces for each gesture, using a mock ink canvas:
+  - G27: tap beside the ink; drag off the stroke draws instead
+  - G28: stroke stopping short; no ink
+  - G29: open shape; circle stays G10; square no longer counts as a circle
+  - G30: touch away from the edge
+  - G32: a 4 s pause; a finger resting for 7 s
+
+  Ink query tests cover hit, crossing, the bounds index, concave fill area, and fill dropped on erase.
+- **Simulator** (iPhone 17 Pro), scripted demo (`-demo5`):
+  - G27, G28, G29, G30 (left and bottom edges) and G32 fired in order, confirmed in the gesture log.
+  - Idle began exactly 5 s after the last touch and ended on the next tap.
+  - Screenshots: plucked line, crossing, filled square with flood glow, idle at 30 Hz, dimmed after 30 s, restored on touch.
+
+**Not verified:** real fingers and real devices. The R8 edge deferral needs a real device to tell whether the first edge swipe reaches G30; iPadOS Slide Over and Stage Manager edges may still win. Not measured: the worst-case delay after idle at 30 Hz before a touch shows up (at most about one 30 Hz frame, 33 ms), and battery use while idle (M8).
+
+Decisions and deviations (please check):
+- **G27 wobble:** the stroke's vibration is a glowing overlay drawn along the stroke, not the ink itself bending.
+- **G29 flood:** the fill appears at full strength at lift. The "flood spreads fast" is a bloom from the closing point, not a reveal clipped to the shape.
+- **G30:** fires on touch-down only. A swipe that starts at the edge gets the same response, plus whatever the stroke does.
+- **G31 after edge touches:** an edge touch claims its lift, so it doesn't also bloom a G31 halo.
+- **Self-intersecting shapes:** a figure-eight fills with a fan from its center, which can look wrong.
+
 ## Known issues and deviations
 
 - **Metal Toolchain not installed.** Shaders are compiled at launch from `ShaderSource.swift` (`makeLibrary(source:)`), which adds a few ms during warm-up and nothing on the touch path. To precompile instead, install the toolchain with `xcodebuild -downloadComponent MetalToolchain` (about 700 MB) and move the source back to a `.metal` file.

@@ -14,14 +14,17 @@ public final class GestureEngine {
         self.config = config
         state = EngineState(config: config)
         let ordered: [Recognizer] = [
-            // Multi-finger first (R2).
+            // Idle ends before anything else reacts to a touch.
+            IdleRecognizer(),
+            // Multi-finger first (R2), then contextual.
             MultiFingerRecognizer(), DrummingRecognizer(),
+            TouchStrokeRecognizer(), CrossStrokeRecognizer(), EdgeRecognizer(),
             TapRecognizer(), DoubleTapRecognizer(), TripleTapRecognizer(), RhythmRecognizer(),
             LongPressRecognizer(), HoldDragRecognizer(), HoldReleaseRecognizer(),
             // These claim a stroke, so they run before G7 on every move.
             SlingshotRecognizer(), ScribbleRecognizer(), DwellRecognizer(),
             // After-the-fact shapes, first match wins at lift.
-            CircleRecognizer(), SpiralRecognizer(), ZigzagRecognizer(), FlickRecognizer(),
+            CircleRecognizer(), SpiralRecognizer(), CloseShapeRecognizer(), ZigzagRecognizer(), FlickRecognizer(),
             DrawRecognizer(),
             LiftOffRecognizer(),   // fallback: must stay last
         ]
@@ -37,6 +40,8 @@ public final class GestureEngine {
         guard !e.isPredicted else { return }
         let i = Int(e.touchID) & 63
         state.now = max(state.now, e.timestamp)
+        state.lastActivity = state.now
+        state.lastTouchX = e.x; state.lastTouchY = e.y
         switch e.phase {
         case .began:
             let wasSingle = state.fingersDown == 1
@@ -66,9 +71,22 @@ public final class GestureEngine {
     /// Advances time-based recognizers. `now` uses the same clock as touch timestamps.
     public func tick(now: Double, emit: (GestureEvent) -> Void) {
         state.now = max(state.now, now)
+        if state.lastActivity < 0 { state.lastActivity = state.now }
+        for i in 0..<state.tracks.count where state.tracks[i].active { state.lastActivity = state.now; break }
         for r in recognizers { r.tick(state, emit) }
     }
 
     /// Number of fingers currently down (Pencil excluded).
     public var fingersDown: Int { state.fingersDown }
+
+    /// Committed ink, for contextual gestures (G27 to G29). Held weakly.
+    public var ink: InkHitTesting? {
+        get { state.ink }
+        set { state.ink = newValue }
+    }
+
+    /// Canvas size in points, for edge gestures (G30).
+    public func setCanvasSize(width: Float, height: Float) {
+        state.canvasWidth = width; state.canvasHeight = height
+    }
 }

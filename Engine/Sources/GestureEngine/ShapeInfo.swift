@@ -22,6 +22,8 @@ struct ShapeInfo {
     var sharpTurns = 0
     /// Larger side of the bounding box.
     var extent: Float = 0
+    /// Area enclosed by the path closed back to its start (shoelace), square points.
+    var area: Float = 0
 
     var turns: Float { abs(sweep) / (2 * .pi) }
 
@@ -44,6 +46,12 @@ struct ShapeInfo {
         s.extent = max(maxX - minX, maxY - minY)
         s.cx = sx / Float(n); s.cy = sy / Float(n)
         s.closeGap = hypot(p[n - 1].x - p[0].x, p[n - 1].y - p[0].y)
+        var twiceArea: Float = 0
+        for k in 0..<n {
+            let a = p[k], b = p[(k + 1) % n]
+            twiceArea += a.x * b.y - b.x * a.y
+        }
+        s.area = abs(twiceArea) / 2
 
         // Radius statistics and swept angle around the centroid.
         var sumR: Float = 0, sumR2: Float = 0
@@ -109,6 +117,7 @@ struct ShapeInfo {
             && radiusVariation <= c.circleMaxRadiusVariation
             && abs(sweep) >= c.circleMinSweep && abs(sweep) <= c.circleMaxSweep
             && closeGap <= c.circleMaxCloseGap * meanRadius
+            && sharpTurns <= 1   // a square's radius barely varies, but it has corners
     }
 
     /// +1 inward, -1 outward, 0 not a spiral.

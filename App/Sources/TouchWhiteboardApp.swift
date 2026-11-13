@@ -1,27 +1,38 @@
-import SwiftUI
+import UIKit
 
+/// UIKit app lifecycle. The canvas needs a real view controller as the window's root,
+/// because only the root controller decides which screen-edge system gestures are
+/// deferred (R8, G30) and whether the home indicator hides. SwiftUI chrome (M7) is
+/// added as a child controller on top.
 @main
-struct TouchWhiteboardApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     configurationForConnecting session: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let config = UISceneConfiguration(name: "Default", sessionRole: session.role)
+        config.delegateClass = SceneDelegate.self
+        return config
     }
 }
 
-struct ContentView: View {
-    var body: some View {
-        ZStack {
-            // The canvas fills the whole screen; safe areas apply to controls only (M7).
-            CanvasRepresentable()
-                .ignoresSafeArea()
-        }
-        .statusBarHidden()
-        .persistentSystemOverlays(.hidden)
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: windowScene)
+        window.rootViewController = CanvasViewController()
+        window.makeKeyAndVisible()
+        self.window = window
     }
 }
 
-struct CanvasRepresentable: UIViewRepresentable {
-    func makeUIView(context: Context) -> CanvasView { CanvasView() }
-    func updateUIView(_ uiView: CanvasView, context: Context) {}
+final class CanvasViewController: UIViewController {
+    override func loadView() { view = CanvasView() }
+
+    // R8: system edge gestures (home, Control Center, notification shade) need a
+    // second swipe while the canvas is up, so a first edge touch reaches G30.
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { .all }
+    override var prefersHomeIndicatorAutoHidden: Bool { true }
+    override var prefersStatusBarHidden: Bool { true }
 }

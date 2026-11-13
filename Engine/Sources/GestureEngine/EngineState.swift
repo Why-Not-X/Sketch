@@ -33,6 +33,9 @@ public struct TouchTrack: Sendable {
     public var drumming = false
     /// Member of a multi-finger session.
     public var inSession = false
+    /// A contextual gesture (G27, G30) took this touch-down, so the single-finger
+    /// tap family stays quiet (R2).
+    public var contextual = false
 
     public var duration: Double { t - startT }
     public var speed: Float { (vx * vx + vy * vy).squareRoot() }
@@ -58,6 +61,13 @@ final class EngineState {
     var tracks = [TouchTrack](repeating: TouchTrack(), count: 64)
     var fingersDown = 0
     var now: Double = 0
+    /// Canvas size in points (edge gestures).
+    var canvasWidth: Float = 0, canvasHeight: Float = 0
+    /// Committed ink, for contextual gestures.
+    weak var ink: InkHitTesting?
+    /// Last time any touch was down, for idle (G32). Negative until the first tick.
+    var lastActivity: Double = -1
+    var lastTouchX: Float = 0, lastTouchY: Float = 0
 
     private(set) var taps: [TapRecord] = []
     private let tapCapacity = 8
@@ -177,7 +187,7 @@ final class EngineState {
                x: Float? = nil, y: Float? = nil, size: Float = 0,
                originX: Float = 0, originY: Float = 0,
                dirX: Float? = nil, dirY: Float? = nil,
-               touchPoints: [Float] = [], touchIDs: [UInt16] = []) -> GestureEvent {
+               touchPoints: [Float] = [], touchIDs: [UInt16] = [], targetID: UInt32 = 0) -> GestureEvent {
         let tr = tracks[i]
         let s = speed ?? tr.speed
         let v = tr.speed
@@ -187,6 +197,6 @@ final class EngineState {
                             fingerCount: UInt8(max(1, fingersDown)),
                             magnitude: magnitude, tempo: tempo, touchID: UInt16(i),
                             size: size, originX: originX, originY: originY,
-                            touchPoints: touchPoints, touchIDs: touchIDs)
+                            touchPoints: touchPoints, touchIDs: touchIDs, targetID: targetID)
     }
 }

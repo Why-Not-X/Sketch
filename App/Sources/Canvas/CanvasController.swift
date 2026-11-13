@@ -21,7 +21,7 @@ private let gestureLogger = Logger(subsystem: "TouchWhiteboard", category: "gest
 /// - G10 circle: the stroke snaps into a clean ring.
 /// - G8 flick, G12 zigzag: the stroke is consumed by the effect; one undo brings it back.
 /// - G15 dwell: blots join the stroke.
-final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
+final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTesting {
     let input = TouchInput()
     let latency = LatencyMonitor()
 
@@ -61,6 +61,18 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
     private var rakeConsumed = false
     // G24: the ink gathered into the orb, restored by a spread.
     private var gathered: InkDocument?
+    // G29: shapes whose fill is saved with the stroke at lift.
+    private var fillShape = [Bool](repeating: false, count: 32)
+    private var fillAlpha: Float = 0.16
+    // Stroke bounds for hit tests, rebuilt when the ink changes.
+    private var inkIndex = InkIndex()
+    private var inkIndexVersion: UInt64 = .max
+    // G32 idle: throttled frame rate, shimmer, and dimming after 30 s.
+    private var idle = false
+    private var dim: Float = 1, dimTarget: Float = 1
+    private var shimmer: Float = 0
+    private static let activeRate = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+    private static let idleRate = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
 
     // Per-frame scratch, reused.
     private var liveVertices: [InkVertex] = []
@@ -84,6 +96,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         mapper = ResponseMapper(set: .base, hapticsAvailable: haptics)
         eraseRadius = mapper.set.response(for: .g9)?.effects.first { $0.kind == .dissolve }?.radius ?? 18
         super.init()
+        engine.ink = self
         liveVertices.reserveCapacity(64 * 1024)
         finishedVertices.reserveCapacity(64 * 1024)
         sprites.reserveCapacity(64)
@@ -105,7 +118,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         link.delegate = self
         // Ask for one frame of latency: the drawable is presented on the next vsync.
         link.preferredFrameLatency = 1
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        link.preferredFrameRateRange = Self.activeRate
         link.add(to: .main, forMode: .common)
         self.link = link
         #if DEBUG
@@ -125,6 +138,41 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         space = InkSpace(width: Float(size.width), height: Float(size.height))
         pixelScale = scale
         effects?.bounds = (space.width, space.height)
+        engine.setCanvasSize(width: space.width, height: space.height)
+    }
+
+    /// Called straight from touchesBegan: leaves idle at once, so the frame after the
+    /// touch is already back at full rate (R4: any touch interrupts idle instantly).
+    func wake() {
+        guard idle else { return }
+        idle = false
+        link?.preferredFrameRateRange = Self.activeRate
+        dimTarget = 1
+        dim = 1
+    }
+
+    // MARK: InkHitTesting (view points in, view points out)
+
+    func hitStroke(x: Float, y: Float, radius: Float) -> StrokeHit? {
+        refreshIndex()
+        let p = space.toUnits(x: x, y: y)
+        guard let h = history.document.hit(x: p.x, y: p.y, radius: radius / space.unit, index: inkIndex) else { return nil }
+        let q = space.toPoints(SIMD2(h.x, h.y))
+        return StrokeHit(strokeID: h.strokeID, x: q.x, y: q.y, along: h.along * space.unit, length: h.length * space.unit)
+    }
+
+    func crossing(x0: Float, y0: Float, x1: Float, y1: Float) -> StrokeCrossing? {
+        refreshIndex()
+        let a = space.toUnits(x: x0, y: y0), b = space.toUnits(x: x1, y: y1)
+        guard let c = history.document.crossing(x0: a.x, y0: a.y, x1: b.x, y1: b.y, index: inkIndex) else { return nil }
+        let q = space.toPoints(SIMD2(c.x, c.y))
+        return StrokeCrossing(strokeID: c.strokeID, x: q.x, y: q.y, dirX: c.dirX, dirY: c.dirY)
+    }
+
+    private func refreshIndex() {
+        guard inkIndexVersion != history.version else { return }
+        inkIndex = InkIndex(history.document)
+        inkIndexVersion = history.version
     }
 
     /// Reverses the last ink change (D4). The Undo button arrives with M7.
@@ -167,6 +215,9 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
             effects.emitDissolve(erased.map { space.toPoints($0) }, now: frameNow)
             erased.removeAll(keepingCapacity: true)
         }
+        // Idle: ease the shimmer in and out, and the dimming after 30 s.
+        shimmer += ((idle ? 1 : 0) - shimmer) * 0.05
+        dim += (dimTarget - dim) * 0.03
         if inkDirty {
             rebuildVertices.removeAll(keepingCapacity: true)
             for stroke in history.document.strokes { tessellate(stroke, into: &rebuildVertices) }
@@ -205,7 +256,8 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         let content = FrameContent(live: liveVertices, sprites: sprites, effects: effectInstances,
                                    particleCount: effects.particleDrawCount,
                                    distortions: effects.distortionBlock(),
-                                   time: effects.gpuTime(frameNow), space: space, pixelScale: pixelScale)
+                                   time: effects.gpuTime(frameNow), dim: dim, shimmer: shimmer,
+                                   space: space, pixelScale: pixelScale)
         renderer.render(drawable: update.drawable, content) { [latency] presentedTime in
             latency.framePresented(at: presentedTime, downs: pendingDowns, newestMove: newestRealTouch)
         }
@@ -255,6 +307,21 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
             }
         case (.g22, .fired):
             rakeConsumed = true   // the quick rake was a swipe: its lines go (one undo brings them back)
+        case (.g27, .began):
+            // The pluck vibrates the stroke that was touched.
+            if let stroke = history.document.strokes.first(where: { $0.id == g.targetID }) {
+                effects?.pathForNextSpawn = stroke.points.map { space.toPoints(SIMD2($0.x, $0.y)) }
+            }
+        case (.g29, .fired) where slot:
+            fillShape[i] = true
+        case (.g32, .began):
+            idle = true
+            link?.preferredFrameRateRange = Self.idleRate
+        case (.g32, .changed):
+            // Everything dims after about 30 s of quiet.
+            dimTarget = g.magnitude > 30 ? max(0.35, 1 - (g.magnitude - 30) / 5 * 0.65) : 1
+        case (.g32, .ended), (.g32, .cancelled):
+            wake()
         case (.g24, .ended):
             if g.magnitude > 0 {
                 if !history.document.isEmpty {
@@ -282,6 +349,8 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         switch c {
         case .spawn(let s) where s.kind == .ribbon:
             ribbonAlpha = s.intensity
+        case .spawn(let s) where s.kind == .fill:
+            fillAlpha = s.intensity
         case .spawn(let s) where s.kind == .blot:
             if let i = slot {
                 liveBlot[i] = InkBlot(x: s.x, y: s.y, radius: s.radius)
@@ -336,6 +405,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
                 ring.blots = stroke.blots
                 stroke = ring
             }
+            if fillShape[i] { stroke.filled = true }
             if rakeMembers.contains(i) {
                 finishRakeMember(i, stroke)
             } else if consumed[i] {
@@ -408,6 +478,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
         scribbling[i] = false
         scribbleCheckpointed[i] = false
         consumed[i] = false
+        fillShape[i] = false
         snapCircle[i] = nil
         blots[i].removeAll(keepingCapacity: true)
         liveBlot[i] = nil
@@ -432,6 +503,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate {
             tessellateRibbon(stroke.points, partner, into: &out)
             return
         }
+        if stroke.filled { FillTessellator.append(stroke.points, alpha: fillAlpha, into: &out) }
         StrokeTessellator.append(stroke.points, taperStart: true, taperEnd: true,
                                  taperLength: brush.taperLength / space.unit,
                                  taperMinFactor: brush.taperMinFactor,

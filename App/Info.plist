@@ -5,5 +5,23 @@
 	<!-- Allows 120 Hz on ProMotion iPhones (spec: Platform and stack). -->
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<!-- UIKit scene lifecycle: the root view controller defers edge gestures (R8). -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 </dict>
 </plist>

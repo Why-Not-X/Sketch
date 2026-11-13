@@ -68,6 +68,7 @@ final class CanvasView: UIView {
     // MARK: Touches. Kept minimal: queue events, start the latency clock, return.
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        controller.wake()
         for t in touches { controller.latency.touchDown(at: t.timestamp) }
         controller.input.handle(touches, event: event, phase: .began, in: self)
     }
