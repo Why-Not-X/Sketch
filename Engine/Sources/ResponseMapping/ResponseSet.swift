@@ -76,6 +76,8 @@ public struct ResponseDefinition: Codable, Equatable, Sendable {
     public var persistence: Persistence
     public var inherits: String
     public var effects: [EffectSpec]
+    /// What actually plays: when, how strong, and what live input drives it.
+    public var hapticCues: [HapticCue]
 }
 
 /// A swappable bundle of reactions. Swapping it changes every reaction without
@@ -87,6 +89,10 @@ public struct ResponseSet: Codable, Equatable, Sendable {
     public var visualBoostWhenNoHaptics: Float
     /// Keyed by gesture ID raw value ("G1"...), so the JSON stays readable.
     public var responses: [String: ResponseDefinition]
+    /// Appendix B palette, keyed by haptic name ("Tick"...).
+    public var hapticPalette: [String: HapticRecipe]
+
+    public func recipe(_ name: HapticName) -> HapticRecipe? { hapticPalette[name.rawValue] }
 
     public func response(for id: GestureID) -> ResponseDefinition? { responses[id.rawValue] }
 

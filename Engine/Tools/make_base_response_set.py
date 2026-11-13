@@ -4,7 +4,7 @@ Appendix A (gesture library) is the source of truth for the text columns; the
 `effects` blocks are the tunable visual recipes. Edit here and re-run:
     python3 Tools/make_base_response_set.py
 """
-import json, os
+import json, os, random
 
 A = [  # id, visual, haptics, persistence, inherits
  ("G1","Ripple ring from the touch point with a bright core dot. Ring expands to about 120 pt, ease-out, about 0.6 s.",["Tick"],"Short","Contact size sets ring size"),
@@ -196,6 +196,70 @@ EFFECTS = {
    "trail":{"count":5,"minSpeed":400,"secondsOfTravel":0.06}}],
 }
 
+# --- Haptic palette (Appendix B starting recipes; tune on a real iPhone) ---
+def T(t, i, sh): return {"type": "transient", "time": t, "intensity": i, "sharpness": sh}
+def C(t, d, i, sh): return {"type": "continuous", "time": t, "duration": d, "intensity": i, "sharpness": sh}
+_rng = random.Random(7)
+_crackle, _t = [], 0.0
+while _t < 0.9:
+    _crackle.append(T(round(_t, 3), round(_rng.uniform(0.25, 0.9), 2), round(_rng.uniform(0.6, 1.0), 2)))
+    _t += _rng.uniform(0.02, 0.09)
+PALETTE = {
+ "Tick":        {"events": [T(0, 0.4, 0.7)]},
+ "Thud":        {"events": [T(0, 0.9, 0.2)]},
+ "Snap":        {"events": [T(0, 1.0, 1.0)]},
+ "Soft rumble": {"events": [C(0, 30, 0.25, 0.1)], "held": True},
+ "Swell":       {"events": [C(0, 30, 1.0, 0.3)], "held": True,
+                 "intensityCurve": [[0, 0.1], [0.6, 0.8]]},
+ "Pulse":       {"events": [T(0, 0.7, 0.4), T(0.12, 0.5, 0.3)]},
+ "Texture":     {"events": [C(0, 30, 0.5, 0.5)], "held": True},
+ "Burst":       {"events": [T(0, 1.0, 0.8), T(0.05, 0.8, 0.7), T(0.12, 0.6, 0.6), T(0.21, 0.45, 0.5),
+                            T(0.32, 0.32, 0.45), T(0.45, 0.2, 0.4)]},
+ "Crackle":     {"events": _crackle},
+ "Settle":      {"events": [C(0, 0.4, 0.6, 0.3)], "intensityCurve": [[0, 1.0], [0.4, 0.0]]},
+}
+
+def cue(name, **kw):
+    d = {"name": name}; d.update(kw); return d
+speed_texture = {"source": "speed", "inMin": 0, "inMax": 2000, "outMin": 0.25, "outMax": 1.0}
+speed_sharp = {"source": "speed", "inMin": 0, "inMax": 2000, "outMin": 0.3, "outMax": 0.8}
+HAPTICS = {
+ "G1":  [cue("Tick")],
+ "G2":  [cue("Thud", delay=0.08)],                               # G1 already ticks (R1 layering)
+ "G3":  [cue("Burst")],
+ "G4":  [cue("Pulse", loopFor=8)],
+ "G5":  [cue("Swell", follow={"source": "magnitude", "inMin": 0.4, "inMax": 2.5, "outMin": 0.1, "outMax": 0.8})],
+ "G6":  [cue("Snap"), cue("Settle", delay=0.06)],
+ "G7":  [cue("Texture", follow=speed_texture, followSharpness=speed_sharp, intensity=0.6)],
+ "G8":  [cue("Snap"), cue("Tick", on="bounce", intensity=0.5)],
+ "G9":  [cue("Texture", follow=speed_texture, followSharpness={"source": "speed", "inMin": 0, "inMax": 1500, "outMin": 0.8, "outMax": 1.0})],
+ "G10": [cue("Burst")],
+ "G11": [cue("Swell", condition="magnitudePositive", duration=0.6), cue("Settle", condition="magnitudeNegative")],
+ "G12": [cue("Crackle")],
+ "G13": [cue("Swell", follow={"source": "magnitude", "inMin": 20, "inMax": 300, "outMin": 0.1, "outMax": 0.8}),
+         cue("Snap", on="end")],
+ "G14": [cue("Soft rumble", follow={"source": "speed", "inMin": 0, "inMax": 1500, "outMin": 0.4, "outMax": 1.0})],
+ "G15": [cue("Soft rumble", follow={"source": "magnitude", "inMin": 0.3, "inMax": 2.0, "outMin": 0.5, "outMax": 1.0})],
+ "G16": [cue("Tick"), cue("Tick", delay=0.05)],
+ "G17": [cue("Texture", follow=speed_texture, intensity=0.6)],
+ "G18": [cue("Swell", follow={"source": "magnitude", "inMin": 1, "inMax": 0.3, "outMin": 0.1, "outMax": 0.8})],
+ "G19": [cue("Thud")],
+ "G20": [cue("Soft rumble", follow={"source": "tempo", "inMin": 0, "inMax": 6, "outMin": 0.4, "outMax": 1.0, "absolute": True})],
+ "G21": [cue("Pulse", everyMagnitude=1)],
+ "G22": [cue("Burst", condition="began"), cue("Texture", condition="fired", duration=0.35)],
+ "G23": [cue("Thud"), cue("Burst", delay=0.1)],
+ "G24": [cue("Swell", condition="magnitudePositive", follow={"source": "magnitude", "inMin": 0, "inMax": 1, "outMin": 0.1, "outMax": 0.8}),
+         cue("Snap", on="end", condition="magnitudeNegative"), cue("Settle", on="end", condition="magnitudeNegative", delay=0.06)],
+ "G25": [cue("Tick")],
+ "G26": [cue("Texture", follow=speed_texture, intensity=0.7)],
+ "G27": [cue("Tick"), cue("Settle", delay=0.05, intensity=0.6)],
+ "G28": [cue("Tick", intensity=0.7)],
+ "G29": [cue("Swell", duration=0.3), cue("Thud", delay=0.3)],
+ "G30": [cue("Thud", intensity=0.5)],
+ "G31": [cue("Tick", intensity=0.35)],
+ "G32": [],
+}
+
 out = {
  "name": "Base",
  "theme": {
@@ -205,10 +269,14 @@ out = {
   "sparkle": [1.0, 0.97, 0.90],
   "glowStrength": 0.38, "sparkleSize": 22, "sparkleLag": 0.45},
  "visualBoostWhenNoHaptics": 1.2,
- "responses": {gid: {"visual": v, "haptics": h, "persistence": p, "inherits": i, "effects": EFFECTS.get(gid, [])}
+ "responses": {gid: {"visual": v, "haptics": h, "persistence": p, "inherits": i, "effects": EFFECTS.get(gid, []),
+                     "hapticCues": HAPTICS[gid]}
                for gid, v, h, p, i in A},
+ "hapticPalette": PALETTE,
 }
 assert len(out["responses"]) == 32
+for gid, cues in HAPTICS.items():
+    for c in cues: assert c["name"] in PALETTE, (gid, c)
 path = os.path.join(os.path.dirname(__file__), "..", "Sources", "ResponseMapping", "Resources", "BaseResponseSet.json")
 with open(path, "w") as f:
     json.dump(out, f, indent=1)

@@ -1,6 +1,5 @@
 import QuartzCore
 import Metal
-import CoreHaptics
 import GestureEngine
 import InkModel
 import ResponseMapping
@@ -31,6 +30,8 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     private var palm = PalmRejection()
     private let engine = GestureEngine()
     private let mapper: ResponseMapper
+    /// Nil where the hardware has no haptics (iPad, Simulator): visuals are boosted instead (R5).
+    private let haptics: HapticsPlayer?
     private var brush = InkBrush.default
     private var history = InkHistory()
     private var inkDirty = false
@@ -92,8 +93,9 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     #endif
 
     override init() {
-        let haptics = CHHapticEngine.capabilitiesForHardware().supportsHaptics
-        mapper = ResponseMapper(set: .base, hapticsAvailable: haptics)
+        let set = ResponseSet.base
+        haptics = HapticsPlayer(palette: set.hapticPalette)   // warmed at launch
+        mapper = ResponseMapper(set: set, hapticsAvailable: haptics != nil)
         eraseRadius = mapper.set.response(for: .g9)?.effects.first { $0.kind == .dissolve }?.radius ?? 18
         super.init()
         engine.ink = self
@@ -109,6 +111,11 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         renderer = r
         effects = EffectSystem(theme: mapper.set.theme, particleBuffer: r.particleBuffer.contents(),
                                particleCapacity: MetalRenderer.particleCapacity, timeBase: r.startTime)
+        // G8: a light tick on every comet bounce.
+        effects?.onBounce = { [weak self] in
+            guard let self, let haptics = self.haptics else { return }
+            self.mapper.haptics(for: .g8, moment: .bounce) { haptics.handle($0) }
+        }
         r.warmUp()
     }
 
@@ -338,7 +345,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
             break
         }
         mapper.map(g, visual: { applyVisual($0, slot: slot ? i : nil) },
-                   haptic: { _ in /* Core Haptics layer arrives in M6 */ })
+                   haptic: { haptics?.handle($0) })
         #if DEBUG
         logGesture(g)
         #endif

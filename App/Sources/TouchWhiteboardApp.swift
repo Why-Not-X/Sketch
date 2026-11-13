@@ -4,16 +4,9 @@ import UIKit
 /// because only the root controller decides which screen-edge system gestures are
 /// deferred (R8, G30) and whether the home indicator hides. SwiftUI chrome (M7) is
 /// added as a child controller on top.
+/// The scene and its delegate are declared in Info.plist (UIApplicationSceneManifest).
 @main
-final class AppDelegate: UIResponder, UIApplicationDelegate {
-    func application(_ application: UIApplication,
-                     configurationForConnecting session: UISceneSession,
-                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
-        let config = UISceneConfiguration(name: "Default", sessionRole: session.role)
-        config.delegateClass = SceneDelegate.self
-        return config
-    }
-}
+final class AppDelegate: UIResponder, UIApplicationDelegate {}
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?

@@ -239,9 +239,26 @@ public enum EffectCommand: Equatable, Sendable {
 public struct HapticCommand: Equatable, Sendable {
     public var name: HapticName
     public var phase: HapticPhase
-    /// 0...1, from live input where the palette entry is continuous.
+    /// 0...1 strength (Core Haptics intensity control).
     public var intensity: Float
+    /// 0...1 sharpness for held recipes that follow input; nil keeps the recipe's own.
+    public var sharpness: Float?
+    /// Ties start, update and stop of one held haptic together.
     public var key: UInt64
+    /// Seconds from now.
+    public var delay: Double
+    /// Play a held recipe for this long only.
+    public var duration: Double?
+    /// Repeat every `loopPeriod` seconds for `loopFor` seconds (G4).
+    public var loopPeriod: Double?
+    public var loopFor: Double?
+
+    public init(name: HapticName, phase: HapticPhase, intensity: Float, sharpness: Float? = nil, key: UInt64,
+                delay: Double = 0, duration: Double? = nil, loopPeriod: Double? = nil, loopFor: Double? = nil) {
+        self.name = name; self.phase = phase; self.intensity = intensity; self.sharpness = sharpness
+        self.key = key; self.delay = delay; self.duration = duration
+        self.loopPeriod = loopPeriod; self.loopFor = loopFor
+    }
 }
 
 public enum HapticPhase: Sendable, Equatable {

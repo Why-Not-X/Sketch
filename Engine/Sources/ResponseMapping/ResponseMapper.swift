@@ -9,6 +9,10 @@ import GestureEngine
 public final class ResponseMapper {
     public var set: ResponseSet
     public var hapticsAvailable: Bool
+    /// Held haptics currently running, by key.
+    private var running = Set<UInt64>()
+    /// Last magnitude step played, for cues that repeat per step (G21).
+    private var steps: [UInt64: Int] = [:]
 
     public init(set: ResponseSet, hapticsAvailable: Bool) {
         self.set = set
@@ -41,11 +45,7 @@ public final class ResponseMapper {
                     }
                 }
             }
-            if hapticsAvailable {
-                for h in def.haptics where h != .none {
-                    haptic(HapticCommand(name: h, phase: .play, intensity: 1, key: key(e, slot: 0, perTouch: true)))
-                }
-            }
+            mapHaptics(def, e, moment: .start, haptic)
 
         case .changed:
             for (slot, spec) in def.effects.enumerated() where isKeyed(spec, def) {
@@ -55,6 +55,7 @@ public final class ResponseMapper {
                                radius: radius(spec, e), intensity: intensity(spec, e, boost: boost)))
                 if !e.touchPoints.isEmpty { visual(.updatePoints(key: k, points: e.touchPoints)) }
             }
+            updateHaptics(def, e, haptic)
 
         case .ended:
             // The trigger ended: ambient effects fade. Replacing effects (G4 pulse) run on.
@@ -64,6 +65,8 @@ public final class ResponseMapper {
             for (slot, spec) in def.effects.enumerated() where spec.spawnOn == .end && passes(spec, e) {
                 visual(.spawn(spawn(spec, slot: slot, def: def, event: e, boost: boost)))
             }
+            stopHaptics(def, e, haptic)
+            mapHaptics(def, e, moment: .end, haptic)
 
         case .cancelled:
             // A provisional gesture turned out wrong (R1): fade everything it keyed,
@@ -71,6 +74,88 @@ public final class ResponseMapper {
             for (slot, spec) in def.effects.enumerated() where isKeyed(spec, def) && (spec.spawnOn ?? .start) == .start {
                 visual(.release(key: key(e, slot: spec.keySlot ?? slot, perTouch: spec.perTouch ?? true)))
             }
+            stopHaptics(def, e, haptic)
+        }
+    }
+
+    /// Haptics for a moment that has no gesture event of its own (G8: each edge bounce).
+    public func haptics(for gesture: GestureID, moment: HapticMoment, haptic: (HapticCommand) -> Void) {
+        guard let def = set.response(for: gesture) else { return }
+        let e = GestureEvent(gesture: gesture, phase: .fired, timestamp: 0, x: 0, y: 0)
+        mapHaptics(def, e, moment: moment, haptic)
+    }
+
+    // MARK: Haptics
+
+    private func hapticKey(_ e: GestureEvent, cue index: Int) -> UInt64 {
+        key(e, slot: 100 + index, perTouch: true)
+    }
+
+    private func isHeld(_ cue: HapticCue) -> Bool {
+        set.recipe(cue.name)?.held == true && cue.duration == nil && cue.follow != nil
+    }
+
+    private func level(_ rule: ScaleRule?, _ e: GestureEvent, base: Float) -> Float {
+        min(1, max(0, base * (rule.map { $0.factor(for: value($0.source, e)) } ?? 1)))
+    }
+
+    private func mapHaptics(_ def: ResponseDefinition, _ e: GestureEvent, moment: HapticMoment,
+                            _ haptic: (HapticCommand) -> Void) {
+        guard hapticsAvailable else { return }
+        for (n, cue) in def.hapticCues.enumerated() where cue.name != .none && (cue.on ?? .start) == moment {
+            guard passesCondition(cue.condition, e) else { continue }
+            let k = hapticKey(e, cue: n)
+            let strength = cue.intensity ?? 1
+            if moment == .start && e.phase == .began && isHeld(cue) {
+                running.insert(k)
+                haptic(HapticCommand(name: cue.name, phase: .start, intensity: level(cue.follow, e, base: strength),
+                                     sharpness: cue.followSharpness.map { level($0, e, base: 1) }, key: k,
+                                     delay: cue.delay ?? 0))
+            } else if cue.everyMagnitude != nil {
+                steps[k] = 0   // first step plays on change, once per full step
+            } else {
+                let period: Double? = cue.loopFor != nil && e.tempo > 0 ? 1 / Double(e.tempo) : nil
+                haptic(HapticCommand(name: cue.name, phase: .play, intensity: strength, key: k,
+                                     delay: cue.delay ?? 0, duration: cue.duration,
+                                     loopPeriod: period, loopFor: period != nil ? cue.loopFor : nil))
+            }
+        }
+    }
+
+    private func updateHaptics(_ def: ResponseDefinition, _ e: GestureEvent, _ haptic: (HapticCommand) -> Void) {
+        guard hapticsAvailable else { return }
+        for (n, cue) in def.hapticCues.enumerated() where (cue.on ?? .start) == .start {
+            let k = hapticKey(e, cue: n)
+            if running.contains(k) {
+                haptic(HapticCommand(name: cue.name, phase: .update, intensity: level(cue.follow, e, base: cue.intensity ?? 1),
+                                     sharpness: cue.followSharpness.map { level($0, e, base: 1) }, key: k))
+            } else if let step = cue.everyMagnitude, step > 0, passesCondition(cue.condition, e) {
+                let reached = Int(abs(e.magnitude) / step)
+                if reached > (steps[k] ?? 0) {
+                    steps[k] = reached
+                    haptic(HapticCommand(name: cue.name, phase: .play, intensity: cue.intensity ?? 1, key: k))
+                }
+            }
+        }
+    }
+
+    /// Held haptics stop the moment the touch ends (spec: Haptics and iPad).
+    private func stopHaptics(_ def: ResponseDefinition, _ e: GestureEvent, _ haptic: (HapticCommand) -> Void) {
+        for (n, cue) in def.hapticCues.enumerated() {
+            let k = hapticKey(e, cue: n)
+            steps[k] = nil
+            guard running.remove(k) != nil else { continue }
+            haptic(HapticCommand(name: cue.name, phase: .stop, intensity: 0, key: k))
+        }
+    }
+
+    private func passesCondition(_ c: EffectCondition?, _ e: GestureEvent) -> Bool {
+        switch c {
+        case .none: return true
+        case .magnitudePositive: return e.magnitude > 0
+        case .magnitudeNegative: return e.magnitude < 0
+        case .fired: return e.phase == .fired
+        case .began: return e.phase == .began
         }
     }
 

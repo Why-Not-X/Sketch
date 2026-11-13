@@ -67,6 +67,10 @@ final class EffectSystem {
 
     /// Canvas size in points, for comet bounces.
     var bounds: (w: Float, h: Float) = (0, 0)
+    /// Called when a comet bounces off a screen edge (G8 haptic).
+    var onBounce: (() -> Void)?
+    private var lastBounce: Double = 0
+
     /// Path the next `.arc` spawn follows (set by the canvas just before mapping G12).
     var pathForNextSpawn: [SIMD2<Float>] = []
     /// Ink distortions active this frame, strongest first (at most 8 reach the GPU).
@@ -330,10 +334,15 @@ final class EffectSystem {
         let r = q.s.radius
         // Soft bounces off the screen edges (a light Tick haptic arrives with M6).
         if bounds.w > 0 {
-            if q.px < r { q.px = r; q.vx = abs(q.vx) * 0.7 }
-            if q.px > bounds.w - r { q.px = bounds.w - r; q.vx = -abs(q.vx) * 0.7 }
-            if q.py < r { q.py = r; q.vy = abs(q.vy) * 0.7 }
-            if q.py > bounds.h - r { q.py = bounds.h - r; q.vy = -abs(q.vy) * 0.7 }
+            var bounced = false
+            if q.px < r { q.px = r; q.vx = abs(q.vx) * 0.7; bounced = true }
+            if q.px > bounds.w - r { q.px = bounds.w - r; q.vx = -abs(q.vx) * 0.7; bounced = true }
+            if q.py < r { q.py = r; q.vy = abs(q.vy) * 0.7; bounced = true }
+            if q.py > bounds.h - r { q.py = bounds.h - r; q.vy = -abs(q.vy) * 0.7; bounced = true }
+            if bounced && hypot(q.vx, q.vy) > 40 && now - lastBounce > 0.08 {
+                lastBounce = now
+                onBounce?()
+            }
         }
         effects[index] = q
         let rate = Double(max(1, q.s.count))
