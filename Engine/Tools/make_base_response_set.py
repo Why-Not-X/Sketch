@@ -1,0 +1,92 @@
+"""Generates Sources/ResponseMapping/Resources/BaseResponseSet.json.
+
+Appendix A (gesture library) is the source of truth for the text columns; the
+`effects` blocks are the tunable visual recipes. Edit here and re-run:
+    python3 Tools/make_base_response_set.py
+"""
+import json, os
+
+A = [  # id, visual, haptics, persistence, inherits
+ ("G1","Ripple ring from the touch point with a bright core dot. Ring expands to about 120 pt, ease-out, about 0.6 s.",["Tick"],"Short","Contact size sets ring size"),
+ ("G2","A second, larger ring chases the first, plus a brief flash at the center. Rings reach about 250 pt; the second starts about 80 ms after the first.",["Tick","Thud"],"Short","Location"),
+ ("G3","Particle burst (about 24 particles) outward, with a ring. Particles fly out with drag and fade.",["Burst"],"Medium","Location"),
+ ("G4","Ring pulses at the last tap point, repeating at the tapped tempo. Keeps pulsing about 8 s, each pulse slightly dimmer; tapping elsewhere moves it.",["Pulse"],"Ambient","Tempo"),
+ ("G5","Glow pools under the finger and grows into a soft orb. Orb grows and slowly breathes; faint particles drift inward.",["Swell"],"Ambient","Hold time sets orb size and brightness"),
+ ("G6","Orb releases as a shockwave ring. Expands fast then slows; strength scales with hold time (capped around 2 s).",["Snap","Settle"],"Medium","Hold time sets shockwave size"),
+ ("G7","Ink line with a soft glow, tapered ends and a brighter sparkle at the stroke head. Line thins as speed rises; the head sparkle trails slightly behind the finger.",["Texture"],"Ink","Speed sets width; direction"),
+ ("G8","Stroke detaches and keeps flying as a comet. Carries momentum, slows with drag, bounces softly off screen edges, then fades.",["Snap","Tick"],"Medium","Velocity and direction"),
+ ("G9","Ink under the scribble dissolves into particles (works as an eraser). Particles drift upward and fade as the scribble passes over them.",["Texture"],"Instant","Scribble area; speed sets dissolve rate"),
+ ("G10","Loop snaps into a clean ring and sends out 3 concentric echo rings; the ring stays as ink. Echoes expand and fade about 150 ms apart.",["Burst"],"Medium","Circle size sets echo distance"),
+ ("G11","Inward: nearby ink and particles are pulled into a vortex that ends in a flash. Outward: a swirl bursts away from the center.",["Swell","Settle"],"Medium","Direction and number of turns set intensity"),
+ ("G12","Stroke turns into a jagged electric arc with small branching sparks. Arc flickers and crackles for about 1 s.",["Crackle"],"Short","Speed sets spark count"),
+ ("G13","Anchor at the first tap with an elastic line to the finger. Line stretches and glows; on release it snaps back and launches particles toward the anchor.",["Swell","Snap"],"Short","Stretch distance sets launch force"),
+ ("G14","The glowing orb follows the finger and pulls nearby particles along; nearby ink is tugged. Pulled items lag with spring physics; tugged ink springs back to rest on release.",["Soft rumble"],"Ambient","Drag speed sets pull strength"),
+ ("G15","Ink blooms at that point like a blot soaking into paper. Blot grows while you dwell, with soft feathered edges.",["Soft rumble"],"Ink","Dwell time sets blot size"),
+ ("G16","Two ripples linked by a glowing filament that pulses once. Filament brightens as the rings expand.",["Tick"],"Short","Distance between fingers sets filament length and ring size"),
+ ("G17","A ribbon fills the space between the fingers, with a gradient edge. Ribbon width follows the finger gap and stretches or twists as it changes.",["Texture"],"Ink","Finger gap sets ribbon width"),
+ ("G18","Nearby ink and particles are pulled toward the pinch center, with a flash when the pinch finishes. Compression speeds up as the fingers close; the finish is a quick implosion.",["Swell"],"Short","Pinch speed sets pull and flash strength"),
+ ("G19","Shockwave expands from the center; nearby ink ripples like water. Ink wobbles outward, then springs back to rest.",["Thud"],"Medium","Spread speed sets shockwave size"),
+ ("G20","Swirl field around the midpoint; particles orbit and ink twists slightly. Keeps spinning with momentum after release, then slows to a stop.",["Soft rumble"],"Medium","Angular velocity"),
+ ("G21","Held finger glows as a core; the orbiting finger leaves a circular trail that becomes a ring. Particles keep orbiting the core for a few seconds after release.",["Pulse"],"Medium","Radius and orbit speed"),
+ ("G22","Tap: three linked ripples form a triangle. Swipe: a wave sweeps across the screen in the swipe direction; it nudges ink slightly and fades at the far edge.",["Burst","Texture"],"Short","Swipe direction and speed"),
+ ("G23","Large splash from the center point of the fingers, with a brief full-canvas flash. Big radial burst (more particles than G3) and a subtle screen pulse.",["Thud","Burst"],"Medium","Finger count sets splash size"),
+ ("G24","Gather: all ink on screen is sucked into one glowing orb at the center. Spread: the orb explodes outward and the ink is restored.",["Swell","Snap","Settle"],"Ink","Gather speed"),
+ ("G25","Ripples hop between the touch points, linked by thin lightning-like lines. Each hop gets brighter as the tempo rises.",["Tick"],"Short","Tempo sets brightness and chain length"),
+ ("G26","One ink line per finger, with a faint shimmer between the lines. Lines keep the finger spacing; the shimmer travels with the stroke heads.",["Texture"],"Ink","Finger spacing sets line spacing"),
+ ("G27","The stroke rings like a plucked string; a glow travels both ways from the touch point. Wave decays along the stroke; the stroke wobbles, then returns to rest.",["Tick","Settle"],"Short","Tap position sets wave origin; stroke length sets ring time"),
+ ("G28","Spark burst at the crossing; the older stroke ripples briefly. Sparks fly off along both stroke directions.",["Tick"],"Instant","Crossing speed sets spark count"),
+ ("G29","Glow floods into the enclosed area from the closing point. Flood spreads fast, then settles to a faint pulse; the fill stays.",["Swell","Thud"],"Ink","Area sets flood time; draw speed sets brightness"),
+ ("G30","Edge glows like a bumper and a wave pushes in from that edge. Wave travels about a third of the screen; nearby ink ripples.",["Thud"],"Short","Speed; position along the edge"),
+ ("G31","A soft halo blooms at the lift point and fades. Bloom size follows speed at lift; fast lifts leave a short trail.",["Tick"],"Short","Speed at lift sets size and trail"),
+ ("G32","Canvas breathes: faint drifting motes, ink shimmers softly, everything dims after about 30 s. Very slow motion, with the frame rate throttled to save battery.",["None"],"Ambient","Existing ink and the last touch location"),
+]
+
+# Visual recipes (built so far: M2 gestures). Radii in points, times in seconds.
+EFFECTS = {
+ "G1": [
+  {"kind":"ring","radius":120,"startRadius":6,"duration":0.6,"thickness":2.5,"intensity":0.9,"color":"glow","easing":"easeOut",
+   "radiusScale":{"source":"magnitude","inMin":6,"inMax":30,"outMin":0.85,"outMax":1.4}},
+  {"kind":"dot","radius":7,"duration":0.35,"intensity":1.2,"color":"sparkle"}],
+ "G2": [
+  {"kind":"ring","radius":250,"startRadius":12,"duration":0.75,"delay":0.08,"thickness":3.5,"intensity":1.0,"color":"glow","easing":"easeOut"},
+  {"kind":"flash","radius":70,"duration":0.18,"intensity":0.9,"color":"sparkle","easing":"linear"}],
+ "G3": [
+  {"kind":"burst","radius":150,"duration":1.6,"count":24,"intensity":1.0,"color":"sparkle"},
+  {"kind":"ring","radius":170,"startRadius":10,"duration":0.8,"thickness":3,"intensity":0.9,"color":"glow","easing":"easeOut"}],
+ "G4": [
+  {"kind":"pulse","radius":90,"startRadius":8,"duration":8,"thickness":3,"intensity":0.9,"color":"glow","easing":"easeOut",
+   "persistence":"Long","replaces":True,"perTouch":False}],
+ "G5": [
+  {"kind":"orb","radius":95,"startRadius":14,"intensity":1.0,"color":"glow",
+   "radiusScale":{"source":"magnitude","inMin":0.4,"inMax":2.5,"outMin":0.45,"outMax":1.0},
+   "intensityScale":{"source":"magnitude","inMin":0.4,"inMax":2.0,"outMin":0.5,"outMax":1.0}},
+  {"kind":"motesInward","radius":95,"count":14,"intensity":0.5,"color":"sparkle"}],
+ "G6": [
+  {"kind":"shockwave","radius":280,"startRadius":20,"duration":1.1,"thickness":7,"intensity":1.0,"color":"glow","easing":"fastThenSlow",
+   "radiusScale":{"source":"magnitude","inMin":0.4,"inMax":2.0,"outMin":0.5,"outMax":1.0},
+   "intensityScale":{"source":"magnitude","inMin":0.4,"inMax":2.0,"outMin":0.6,"outMax":1.0}},
+  {"kind":"flash","radius":60,"duration":0.2,"intensity":0.8,"color":"sparkle","easing":"linear"}],
+ "G31": [
+  {"kind":"halo","radius":26,"startRadius":8,"duration":0.7,"intensity":0.55,"color":"glow","easing":"easeOut",
+   "radiusScale":{"source":"speed","inMin":0,"inMax":2000,"outMin":0.7,"outMax":1.8},
+   "trail":{"count":5,"minSpeed":400,"secondsOfTravel":0.06}}],
+}
+
+out = {
+ "name": "Base",
+ "theme": {
+  "background": [0.043, 0.043, 0.051],
+  "ink": [1.0, 0.95, 0.86],
+  "glow": [1.0, 0.80, 0.58],
+  "sparkle": [1.0, 0.97, 0.90],
+  "glowStrength": 0.38, "sparkleSize": 22, "sparkleLag": 0.45},
+ "visualBoostWhenNoHaptics": 1.2,
+ "responses": {gid: {"visual": v, "haptics": h, "persistence": p, "inherits": i, "effects": EFFECTS.get(gid, [])}
+               for gid, v, h, p, i in A},
+}
+assert len(out["responses"]) == 32
+path = os.path.join(os.path.dirname(__file__), "..", "Sources", "ResponseMapping", "Resources", "BaseResponseSet.json")
+with open(path, "w") as f:
+    json.dump(out, f, indent=1)
+    f.write("\n")
+print("wrote", os.path.normpath(path))
