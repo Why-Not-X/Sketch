@@ -127,6 +127,17 @@ final class M5TraceTests: XCTestCase {
         XCTAssertLessThan(order, out.firstIndex { $0.gesture == .g1 && $0.timestamp == 7 }!, "ends before the touch reacts")
     }
 
+    func testG32EndsOnActivityOutsideTheCanvas() {
+        let engine = GestureEngine()
+        var out: [GestureEvent] = []
+        var t = 0.0
+        while t < 6 { engine.tick(now: t) { out.append($0) }; t += 0.1 }
+        XCTAssertTrue(out.has(.g32, .began))
+        engine.noteActivity(at: t)          // e.g. a tap on the Undo button
+        engine.tick(now: t + 0.01) { out.append($0) }
+        XCTAssertTrue(out.has(.g32, .ended))
+    }
+
     func testG32NearMissShortPause() {
         var b = TraceBuilder()
         b.tap(at: 0); b.tap(at: 4)

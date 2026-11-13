@@ -7,7 +7,7 @@ final class CanvasView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
     var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
-    private let controller: CanvasController
+    let controller: CanvasController
     #if DEBUG
     private let hud = UILabel()
     #endif
@@ -49,7 +49,8 @@ final class CanvasView: UIView {
         controller.resize(to: bounds.size, scale: Float(scale))
         #if DEBUG
         let inset = safeAreaInsets
-        hud.frame = CGRect(x: inset.left + 12, y: inset.top + 8, width: bounds.width - inset.left - inset.right - 24, height: 120)
+        // Leaves the top-right corner to the controls.
+        hud.frame = CGRect(x: inset.left + 12, y: inset.top + 8, width: bounds.width - inset.left - inset.right - 190, height: 120)
         #endif
     }
 
@@ -59,7 +60,7 @@ final class CanvasView: UIView {
     override var canBecomeFirstResponder: Bool { true }
 
     #if DEBUG
-    // Shake to undo until the Undo button arrives in M7 (Simulator: Device → Shake).
+    // Shake to undo, a debug shortcut alongside the Undo button (Simulator: Device → Shake).
     override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
         if motion == .motionShake { controller.undo() }
     }

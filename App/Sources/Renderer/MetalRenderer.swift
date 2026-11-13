@@ -193,6 +193,47 @@ final class MetalRenderer {
         cb.waitUntilCompleted()
     }
 
+    /// Save/Share: renders the committed ink alone on the base background, at the given
+    /// pixel size, with no effects or distortions (effects in flight are not captured).
+    func snapshot(space: InkSpace, pixelScale: Float) -> CGImage? {
+        let w = Int((space.width * pixelScale).rounded()), h = Int((space.height * pixelScale).rounded())
+        guard w > 0, h > 0 else { return nil }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
+        d.usage = .renderTarget
+        d.storageMode = .shared
+        guard let tex = device.makeTexture(descriptor: d), let cb = queue.makeCommandBuffer() else { return nil }
+        let bg = theme.background
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = tex
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.r), green: Double(bg.g), blue: Double(bg.b), alpha: 1)
+        var u = uniforms(space: space, pixelScale: pixelScale, time: 0)
+        var dist = DistortionBlock()
+        if let enc = cb.makeRenderCommandEncoder(descriptor: pass) {
+            if committedCount > 0 {
+                enc.setRenderPipelineState(inkPipeline)
+                enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.setVertexBytes(&dist, length: MemoryLayout<DistortionBlock>.stride, index: 2)
+                enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                enc.setVertexBuffer(committed, offset: 0, index: 0)
+                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: committedCount)
+            }
+            enc.endEncoding()
+        }
+        cb.commit()
+        cb.waitUntilCompleted()
+
+        let bytesPerRow = w * 4
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * h)
+        tex.getBytes(&pixels, bytesPerRow: bytesPerRow, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+        // The ink shader writes premultiplied BGRA; the background is opaque.
+        let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: info) else { return nil }
+        return ctx.makeImage()
+    }
+
     /// Replaces all committed ink (after an erase, undo or snap). Uses a fresh buffer so
     /// frames still in flight keep reading the old one.
     func resetCommitted(_ vertices: [InkVertex]) {

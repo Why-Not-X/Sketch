@@ -236,6 +236,39 @@ Ran:
 
 **Tuning:** change values in `make_base_response_set.py` (the `PALETTE` and `HAPTICS` tables), run it, and rebuild. No logic changes are needed.
 
+## M7 Ink management and chrome: done and checked in the Simulator with simulated touch
+
+Built:
+- **Controls:**
+  - Undo, Clear and Save/Share: a small SwiftUI capsule of three icon buttons in the top-right corner, inside the safe area, in warm white like the ink.
+  - The hosting view is exactly the size of the buttons, so it can't take touches meant for the canvas.
+  - Each button greys out when it has nothing to do.
+- **Undo (D4):** reverses the last ink change: a stroke, a scribble erase, a fill, a gather, a clear, or a stroke consumed by G8, G12 or a swipe. History holds 64 steps.
+- **Clear:** wipes all ink in one tap, as one undoable step. No confirmation, per spec.
+- **Save/Share:**
+  - Renders the committed ink alone on the base background off-screen at full screen resolution, with no effects in flight, HUD, idle dimming or buttons.
+  - Writes it as `Touch Whiteboard <date>.png` and opens the system share sheet (a popover from the Share button on iPad).
+  - Ink is brought up to date first, so an export right after an undo is never stale.
+- **Rotation:** ink is stored in canvas units (offset from center, divided by the short side), so it stays centered at the same scale. The controls and HUD follow the safe area.
+- **Idle ends on any touch:** a tap on a control now ends idle (R4) through `GestureEngine.noteActivity`. Before the fix, the canvas kept dimming while you tapped buttons.
+  - Checked in the Simulator: idle began 5 s after the last stroke and dimmed the canvas.
+  - A tap on Undo after 11 minutes of idle ended it (`G32✓`) and restored full brightness.
+  - Not confirmed: the frame rate's return to full speed (the HUD averages over the last 240 frames, and the Simulator never reaches 120 Hz).
+
+Ran (Simulator, iPhone 17 Pro, simulated touches through the Simulator panel):
+- **Undo:** drew two strokes; the buttons were enabled; Undo removed the last stroke.
+- **Clear:** emptied the canvas and greyed out Clear and Share while Undo stayed available. Undo brought the ink back.
+- **Rotation:** rotated to landscape and back. The ink stayed, centered and at the same scale, and the controls moved to the new top-right corner.
+- **Share:** opened the share sheet with a 136 KB PNG. The exported file is 1206 × 2622 px, ink only on the base background.
+- **Also caught and fixed:** Undo stayed greyed out after a flick consumed a stroke, because the buttons only refreshed when the document changed. They now refresh whenever Undo or Clear availability changes.
+- **Unit tests:** 152 pass (new: idle ends on outside activity).
+
+**Not verified:** a real device, an iPad share popover on hardware, VoiceOver on the buttons (labels are set), and Save to Photos (the share sheet offers whatever the device has).
+
+Decisions (please check):
+- **Placement:** the buttons sit in the top-right corner. If they get in the way of drawing, bottom-right is the alternative.
+- **Debug only:** the HUD and shake-to-undo remain in debug builds only.
+
 ## Known issues and deviations
 
 - **Metal Toolchain not installed.** Shaders are compiled at launch from `ShaderSource.swift` (`makeLibrary(source:)`), which adds a few ms during warm-up and nothing on the touch path. To precompile instead, install the toolchain with `xcodebuild -downloadComponent MetalToolchain` (about 700 MB) and move the source back to a `.metal` file.

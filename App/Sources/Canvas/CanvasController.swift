@@ -158,6 +158,12 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         dim = 1
     }
 
+    /// A tap on the controls: not a canvas touch, but it still ends idle at once.
+    func noteControlTouch() {
+        wake()
+        engine.noteActivity(at: CACurrentMediaTime())
+    }
+
     // MARK: InkHitTesting (view points in, view points out)
 
     func hitStroke(x: Float, y: Float, radius: Float) -> StrokeHit? {
@@ -182,7 +188,41 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         inkIndexVersion = history.version
     }
 
-    /// Reverses the last ink change (D4). The Undo button arrives with M7.
+    /// Tells the controls whether Undo and Clear have anything to do. Main thread.
+    var onInkStateChange: ((_ canUndo: Bool, _ isEmpty: Bool) -> Void)?
+    private var reportedState: (canUndo: Bool, isEmpty: Bool)?
+
+    /// Clear (D4): wipes all ink in one tap, as one undoable step.
+    func clear() {
+        guard !history.document.isEmpty else { return }
+        history.record { $0.removeAll() }
+        gathered = nil
+        inkDirty = true
+    }
+
+    /// Save/Share: the committed ink on the base background, at screen resolution.
+    func exportImage() -> CGImage? {
+        flushInk()
+        return renderer?.snapshot(space: space, pixelScale: pixelScale)
+    }
+
+    /// Brings the GPU's committed ink up to date with the document now, rather than at
+    /// the next frame (an export right after an undo must not show stale ink).
+    private func flushInk() {
+        guard let renderer else { return }
+        if inkDirty {
+            rebuildVertices.removeAll(keepingCapacity: true)
+            for stroke in history.document.strokes { tessellate(stroke, into: &rebuildVertices) }
+            renderer.resetCommitted(rebuildVertices)
+            finishedVertices.removeAll(keepingCapacity: true)
+            inkDirty = false
+        } else if !finishedVertices.isEmpty {
+            renderer.appendCommitted(finishedVertices)
+            finishedVertices.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// Reverses the last ink change (D4): a stroke, an erase, a fill, a gather, a clear.
     func undo() {
         guard history.undo() else { return }
         inkDirty = true
@@ -225,15 +265,13 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         // Idle: ease the shimmer in and out, and the dimming after 30 s.
         shimmer += ((idle ? 1 : 0) - shimmer) * 0.05
         dim += (dimTarget - dim) * 0.03
-        if inkDirty {
-            rebuildVertices.removeAll(keepingCapacity: true)
-            for stroke in history.document.strokes { tessellate(stroke, into: &rebuildVertices) }
-            renderer.resetCommitted(rebuildVertices)
-            finishedVertices.removeAll(keepingCapacity: true)
-            inkDirty = false
-        } else if !finishedVertices.isEmpty {
-            renderer.appendCommitted(finishedVertices)
-            finishedVertices.removeAll(keepingCapacity: true)
+        flushInk()
+        // Compared directly: a consumed stroke (G8, G12) adds an undo step without
+        // changing the document.
+        let state = (canUndo: history.canUndo, isEmpty: history.document.isEmpty)
+        if reportedState.map({ $0 != state }) ?? true {
+            reportedState = state
+            onInkStateChange?(state.canUndo, state.isEmpty)
         }
 
         liveVertices.removeAll(keepingCapacity: true)

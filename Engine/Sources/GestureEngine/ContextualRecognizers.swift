@@ -169,6 +169,10 @@ final class IdleRecognizer: Recognizer {
             since = s.lastActivity
             lastReport = s.now
             emit(event(.began, s, i: 0))
+        } else if quiet < s.config.idleDelay {
+            // Activity the engine did not see as a touch (noteActivity) ends idle too.
+            idle = false
+            emit(event(.ended, s, i: 0))
         } else if s.now - lastReport >= 0.5 {
             lastReport = s.now
             emit(event(.changed, s, i: 0))

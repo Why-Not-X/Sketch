@@ -85,6 +85,12 @@ public final class GestureEngine {
         set { state.ink = newValue }
     }
 
+    /// A touch the engine does not see (the app's own buttons) still counts as
+    /// activity: idle (G32) ends on the next tick (R4: any touch interrupts it).
+    public func noteActivity(at t: Double) {
+        state.lastActivity = max(state.lastActivity, t)
+    }
+
     /// Canvas size in points, for edge gestures (G30).
     public func setCanvasSize(width: Float, height: Float) {
         state.canvasWidth = width; state.canvasHeight = height
