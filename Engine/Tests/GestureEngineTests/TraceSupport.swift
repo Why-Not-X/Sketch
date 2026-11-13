@@ -44,6 +44,67 @@ struct TraceBuilder {
     }
 
     mutating func add(_ e: TouchEvent) { events.append(e) }
+
+    /// A stroke through `points`, sampled at 120 Hz with even spacing along the path.
+    /// `pauseAt` holds the finger still at that fraction of the path for `pause` seconds.
+    mutating func path(_ id: UInt16 = 0, at t: Double, points: [(Float, Float)], duration: Double,
+                       kind: TouchKind = .finger, pauseAt: Double? = nil, pause: Double = 0,
+                       lift: Bool = true) {
+        var lengths: [Float] = [0]
+        for k in 1..<points.count {
+            lengths.append(lengths[k - 1] + hypot(points[k].0 - points[k - 1].0, points[k].1 - points[k - 1].1))
+        }
+        let total = lengths.last!
+        func at(_ f: Float) -> (Float, Float) {
+            let d = f * total
+            var k = 1
+            while k < lengths.count - 1 && lengths[k] < d { k += 1 }
+            let seg = max(1e-6, lengths[k] - lengths[k - 1])
+            let u = min(1, max(0, (d - lengths[k - 1]) / seg))
+            return (points[k - 1].0 + (points[k].0 - points[k - 1].0) * u,
+                    points[k - 1].1 + (points[k].1 - points[k - 1].1) * u)
+        }
+        events.append(TouchEvent(touchID: id, phase: .began, kind: kind, timestamp: t, x: points[0].0, y: points[0].1))
+        let steps = max(2, Int(duration * 120))
+        var time = t
+        var paused = false
+        for k in 1...steps {
+            let f = Float(k) / Float(steps)
+            time = t + duration * Double(f) + (paused ? pause : 0)
+            if let p = pauseAt, !paused, Double(f) >= p {
+                paused = true
+                let q = at(f)
+                var pt = time
+                while pt < time + pause {   // still finger: tiny jitter keeps samples coming
+                    pt += 1.0 / 60
+                    events.append(TouchEvent(touchID: id, phase: .moved, kind: kind, timestamp: pt, x: q.0 + 0.5, y: q.1))
+                }
+                time += pause
+            }
+            let q = at(f)
+            events.append(TouchEvent(touchID: id, phase: .moved, kind: kind, timestamp: time, x: q.0, y: q.1))
+        }
+        if lift {
+            let q = at(1)
+            events.append(TouchEvent(touchID: id, phase: .ended, kind: kind, timestamp: time, x: q.0, y: q.1))
+        }
+    }
+}
+
+/// Points on a circle or spiral around (cx, cy).
+func spiralPoints(cx: Float = 300, cy: Float = 400, from r0: Float, to r1: Float, turns: Float,
+                  startAngle: Float = 0, n: Int = 120) -> [(Float, Float)] {
+    (0...n).map { k in
+        let f = Float(k) / Float(n)
+        let a = startAngle + f * turns * 2 * .pi
+        let r = r0 + (r1 - r0) * f
+        return (cx + r * cos(a), cy + r * sin(a))
+    }
+}
+
+/// A zigzag of `legs` straight legs across `width`, each `height` tall.
+func zigzagPoints(x: Float = 100, y: Float = 400, width: Float, height: Float, legs: Int) -> [(Float, Float)] {
+    (0...legs).map { k in (x + width * Float(k) / Float(legs), y + (k % 2 == 0 ? 0 : height)) }
 }
 
 /// Runs a trace through a fresh engine, ticking at 120 Hz, and returns every event emitted.

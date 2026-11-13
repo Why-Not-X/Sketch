@@ -10,7 +10,14 @@ A blank canvas where every touch gets an instant reaction. Native Swift, Metal a
 4. In the device menu at the top of the window, pick your iPhone or iPad.
 5. Press **⌘R**. The first time, the device may ask you to trust the developer: open Settings → General → VPN & Device Management and tap Trust.
 
-The debug HUD at the top left shows the measured frame rate and touch-to-screen latency.
+The debug HUD at the top left shows the measured frame rate, touch-to-screen latency and the last gestures recognized. In debug builds, shake the device to undo (the Undo button arrives with M7).
+
+## Scripted demos (Simulator)
+
+Add a launch argument under Product → Scheme → Edit Scheme… → Run → Arguments:
+
+- `-demo`: taps, holds, rhythm and a stroke (G1 to G7, G31)
+- `-demo3`: scribble, circle, spiral, zigzag, flick, slingshot, hold-drag and dwell (G8 to G15)
 
 ## Layout
 

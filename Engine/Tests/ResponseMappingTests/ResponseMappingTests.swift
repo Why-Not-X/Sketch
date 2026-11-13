@@ -132,6 +132,35 @@ final class ResponseMappingTests: XCTestCase {
         XCTAssertEqual(spawns(noV)[0].intensity, spawns(withV)[0].intensity * 1.2, accuracy: 1e-5)
     }
 
+    func testEveryM3GestureHasEffects() {
+        for id in [GestureID.g8, .g9, .g10, .g11, .g12, .g13, .g14, .g15] {
+            XCTAssertFalse(set.response(for: id)!.effects.isEmpty, id.rawValue)
+        }
+    }
+
+    func testSpiralDirectionPicksItsEffects() {
+        let m = ResponseMapper(set: set, hapticsAvailable: true)
+        let inward = spawns(collect(m, GestureEvent(gesture: .g11, phase: .fired, timestamp: 0, x: 0, y: 0, magnitude: 2, size: 100)).0)
+        let outward = spawns(collect(m, GestureEvent(gesture: .g11, phase: .fired, timestamp: 0, x: 0, y: 0, magnitude: -2, size: 100)).0)
+        XCTAssertEqual(inward.map(\.kind), [.vortex, .flash], "inward ends in a flash")
+        XCTAssertEqual(outward.map(\.kind), [.vortex, .ring])
+        XCTAssertGreaterThan(inward[0].magnitude, 0)
+    }
+
+    func testSlingshotTetherFollowsThenLaunchesOnRelease() {
+        let m = ResponseMapper(set: set, hapticsAvailable: true)
+        let began = spawns(collect(m, GestureEvent(gesture: .g13, phase: .began, timestamp: 0, x: 50, y: 0,
+                                                   magnitude: 50, touchID: 2, originX: 0, originY: 0)).0)
+        XCTAssertEqual(began.map(\.kind), [.tether], "the launch waits for the release")
+        XCTAssertEqual(began[0].originX, 0)
+        let end = collect(m, GestureEvent(gesture: .g13, phase: .ended, timestamp: 1, x: 200, y: 0,
+                                          magnitude: 200, touchID: 2, originX: 0, originY: 0)).0
+        XCTAssertTrue(end.contains(.release(key: began[0].key)), "the tether snaps back")
+        let launch = spawns(end)
+        XCTAssertEqual(launch.map(\.kind), [.launch])
+        XCTAssertGreaterThan(launch[0].radius, set.response(for: .g13)!.effects[1].radius, "a long stretch launches harder")
+    }
+
     func testSwappingTheSetChangesTheReaction() {
         var custom = set
         custom.responses["G1"]!.effects[0].radius = 40

@@ -153,6 +153,19 @@ final class MetalRenderer {
         cb.waitUntilCompleted()
     }
 
+    /// Replaces all committed ink (after an erase, undo or snap). Uses a fresh buffer so
+    /// frames still in flight keep reading the old one.
+    func resetCommitted(_ vertices: [InkVertex]) {
+        let stride = MemoryLayout<InkVertex>.stride
+        let length = max(committed.length, vertices.count * stride)
+        guard let fresh = device.makeBuffer(length: length, options: .storageModeShared) else { return }
+        if !vertices.isEmpty {
+            vertices.withUnsafeBytes { src in _ = memcpy(fresh.contents(), src.baseAddress!, src.count) }
+        }
+        committed = fresh
+        committedCount = vertices.count
+    }
+
     func appendCommitted(_ vertices: [InkVertex]) {
         let stride = MemoryLayout<InkVertex>.stride
         let needed = (committedCount + vertices.count) * stride

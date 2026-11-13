@@ -1,3 +1,5 @@
+import Foundation
+
 /// Ink is kept as data, not pixels, so it stays interactive (hit-testing for G9, G27,
 /// G28) and survives rotation.
 ///
@@ -19,21 +21,158 @@ public struct InkPoint: Codable, Equatable, Sendable {
     }
 }
 
+/// G15: a round ink blot soaking into the page, in canvas units.
+public struct InkBlot: Codable, Equatable, Sendable {
+    public var x: Float
+    public var y: Float
+    public var radius: Float
+    public init(x: Float, y: Float, radius: Float) { self.x = x; self.y = y; self.radius = radius }
+}
+
 public struct Stroke: Codable, Equatable, Sendable {
     public var id: UInt32
     public var points: [InkPoint]
     public var isPencil: Bool
+    /// Blots left by dwelling (G15) while drawing this stroke.
+    public var blots: [InkBlot]
 
-    public init(id: UInt32, points: [InkPoint], isPencil: Bool) {
-        self.id = id; self.points = points; self.isPencil = isPencil
+    public init(id: UInt32, points: [InkPoint], isPencil: Bool, blots: [InkBlot] = []) {
+        self.id = id; self.points = points; self.isPencil = isPencil; self.blots = blots
+    }
+
+    /// A closed, evenly sampled circle (G10 "snaps into a clean ring").
+    public static func circle(id: UInt32, centerX: Float, centerY: Float, radius: Float,
+                              width: Float, startAngle: Float = 0, t: Double = 0) -> Stroke {
+        let n = max(24, Int(radius * 2 * .pi / 0.004))   // about one point per 0.004 units
+        let pts = (0...n).map { k -> InkPoint in
+            let a = startAngle + Float(k) / Float(n) * 2 * .pi
+            return InkPoint(x: centerX + radius * cos(a), y: centerY + radius * sin(a), t: t, width: width)
+        }
+        return Stroke(id: id, points: pts, isPencil: false)
     }
 }
 
-/// All committed ink. Undo, Clear and erase arrive in M3 and M7.
+/// All committed ink. A value type, so an undo snapshot is a cheap copy-on-write copy.
 public struct InkDocument: Codable, Equatable, Sendable {
     public private(set) var strokes: [Stroke] = []
     public init() {}
+
     public mutating func append(_ stroke: Stroke) { strokes.append(stroke) }
+
+    public mutating func removeAll() { strokes.removeAll() }
+
+    public var isEmpty: Bool { strokes.isEmpty }
+
+    /// G9: erases ink inside a circle (canvas units). Strokes are split around the
+    /// erased part; pieces shorter than two points and blots inside are removed.
+    /// Erased point positions are appended to `erased` (for the dissolve effect).
+    /// Returns true if anything changed.
+    @discardableResult
+    public mutating func erase(x: Float, y: Float, radius: Float, erased: inout [SIMD2<Float>]) -> Bool {
+        let r2 = radius * radius
+        var changed = false
+        var out: [Stroke] = []
+        out.reserveCapacity(strokes.count)
+        for stroke in strokes {
+            guard stroke.intersects(x: x, y: y, radius: radius) else { out.append(stroke); continue }
+            var pieces: [[InkPoint]] = [[]]
+            var hit = false
+            for p in stroke.points {
+                let dx = p.x - x, dy = p.y - y
+                let reach = radius + p.width * 0.5
+                if dx * dx + dy * dy <= reach * reach {
+                    hit = true
+                    erased.append(SIMD2(p.x, p.y))
+                    if !pieces[pieces.count - 1].isEmpty { pieces.append([]) }
+                } else {
+                    pieces[pieces.count - 1].append(p)
+                }
+            }
+            var blots = stroke.blots
+            let before = blots.count
+            blots.removeAll { b in
+                let dx = b.x - x, dy = b.y - y
+                return dx * dx + dy * dy <= r2 + b.radius * b.radius
+            }
+            if blots.count != before { hit = true }
+            guard hit else { out.append(stroke); continue }
+            changed = true
+            var first = true
+            for piece in pieces where piece.count >= 2 {
+                out.append(Stroke(id: stroke.id, points: piece, isPencil: stroke.isPencil, blots: first ? blots : []))
+                first = false
+            }
+            if first && !blots.isEmpty {
+                // The line is gone but blots outside the eraser remain.
+                out.append(Stroke(id: stroke.id, points: [], isPencil: stroke.isPencil, blots: blots))
+            }
+        }
+        if changed { strokes = out }
+        return changed
+    }
+}
+
+extension Stroke {
+    /// Cheap bounding-box test (canvas units).
+    func intersects(x: Float, y: Float, radius: Float) -> Bool {
+        guard !points.isEmpty || !blots.isEmpty else { return false }
+        var minX = Float.greatestFiniteMagnitude, minY = minX, maxX = -minX, maxY = -minX
+        var pad: Float = 0
+        for p in points {
+            minX = min(minX, p.x); maxX = max(maxX, p.x); minY = min(minY, p.y); maxY = max(maxY, p.y)
+            pad = max(pad, p.width)
+        }
+        for b in blots {
+            minX = min(minX, b.x - b.radius); maxX = max(maxX, b.x + b.radius)
+            minY = min(minY, b.y - b.radius); maxY = max(maxY, b.y + b.radius)
+        }
+        return x + radius >= minX - pad && x - radius <= maxX + pad
+            && y + radius >= minY - pad && y - radius <= maxY + pad
+    }
+}
+
+/// Undo history (D4, R3). Every change to ink goes through `record`, so a wrong
+/// guess by an after-the-fact gesture costs exactly one undo.
+public struct InkHistory: Sendable {
+    public private(set) var document = InkDocument()
+    private var undoStack: [InkDocument] = []
+    public let limit: Int
+
+    public init(limit: Int = 64) { self.limit = limit }
+
+    public var canUndo: Bool { !undoStack.isEmpty }
+
+    /// Applies a change as one undoable step.
+    public mutating func record(_ change: (inout InkDocument) -> Void) {
+        let before = document
+        change(&document)
+        guard document != before else { return }
+        push(before)
+    }
+
+    /// Saves the current state as an undo point without changing it. Use before a
+    /// change that is applied gradually (a scribble erasing over many frames).
+    public mutating func checkpoint() { push(document) }
+
+    /// Changes the document without adding an undo step (continuing a checkpointed change).
+    public mutating func continueChange(_ change: (inout InkDocument) -> Void) { change(&document) }
+
+    /// Records `undoState` as the state undo returns to, while the document stays as
+    /// it is. Used when a gesture consumes a stroke that was never committed (G8 flick,
+    /// G12 zigzag): undo brings the stroke back as ink.
+    public mutating func pushUndoState(_ undoState: InkDocument) { push(undoState) }
+
+    @discardableResult
+    public mutating func undo() -> Bool {
+        guard let last = undoStack.popLast() else { return false }
+        document = last
+        return true
+    }
+
+    private mutating func push(_ d: InkDocument) {
+        undoStack.append(d)
+        if undoStack.count > limit { undoStack.removeFirst() }
+    }
 }
 
 /// Maps view points to canvas units and back for the current canvas size.

@@ -21,9 +21,21 @@ public struct TouchTrack: Sendable {
     public var holdBroken = false
     /// A one-shot gesture consumed this touch's lift, so G31 stays quiet.
     public var liftClaimed = false
+    /// Another gesture owns this stroke (scribble, slingshot): G7 must not draw it.
+    public var strokeClaimed = false
+    public var scribbling = false
+    public var slingshot = false
+    /// A G5 hold turned into a drag (G14).
+    public var holdDragging = false
 
     public var duration: Double { t - startT }
     public var speed: Float { (vx * vx + vy * vy).squareRoot() }
+}
+
+struct PathPoint {
+    var x: Float
+    var y: Float
+    var t: Double
 }
 
 struct TapRecord {
@@ -43,10 +55,22 @@ final class EngineState {
 
     private(set) var taps: [TapRecord] = []
     private let tapCapacity = 8
+    /// Real samples of each touch, for after-the-fact shape recognition.
+    private(set) var paths: [[PathPoint]]
+    private var shapes = [ShapeInfo?](repeating: nil, count: 64)
 
     init(config: GestureConfig) {
         self.config = config
         taps.reserveCapacity(tapCapacity)
+        paths = (0..<64).map { _ in var a = [PathPoint](); a.reserveCapacity(512); return a }
+    }
+
+    /// Shape analysis of touch `i`'s path, computed once on first use.
+    func shape(_ i: Int) -> ShapeInfo {
+        if let s = shapes[i] { return s }
+        let s = ShapeInfo.analyze(paths[i], config: config)
+        shapes[i] = s
+        return s
     }
 
     var lastTap: TapRecord? { taps.last }
@@ -63,6 +87,9 @@ final class EngineState {
         tr.startX = e.x; tr.startY = e.y; tr.startT = e.timestamp
         tr.x = e.x; tr.y = e.y; tr.t = e.timestamp; tr.lastMoveT = e.timestamp
         tr.majorRadius = e.majorRadius
+        paths[i].removeAll(keepingCapacity: true)
+        paths[i].append(PathPoint(x: e.x, y: e.y, t: e.timestamp))
+        shapes[i] = nil
         if e.kind == .finger {
             fingersDown += 1
             if fingersDown > 1 {
@@ -94,6 +121,7 @@ final class EngineState {
         let ox = e.x - tr.startX, oy = e.y - tr.startY
         tr.maxDisplacement = max(tr.maxDisplacement, (ox * ox + oy * oy).squareRoot())
         tracks[i] = tr
+        paths[i].append(PathPoint(x: e.x, y: e.y, t: e.timestamp))
     }
 
     /// Updates position for a lift without counting it as motion.
@@ -101,6 +129,10 @@ final class EngineState {
         let ox = e.x - tracks[i].startX, oy = e.y - tracks[i].startY
         tracks[i].maxDisplacement = max(tracks[i].maxDisplacement, (ox * ox + oy * oy).squareRoot())
         tracks[i].x = e.x; tracks[i].y = e.y; tracks[i].t = e.timestamp
+        if let last = paths[i].last, last.x != e.x || last.y != e.y {
+            paths[i].append(PathPoint(x: e.x, y: e.y, t: e.timestamp))
+            shapes[i] = nil
+        }
     }
 
     func isValidTap(_ i: Int) -> Bool {
@@ -131,14 +163,17 @@ final class EngineState {
     }
 
     func event(_ id: GestureID, _ phase: GesturePhase, _ i: Int, at t: Double? = nil,
-               magnitude: Float = 0, tempo: Float = 0, speed: Float? = nil) -> GestureEvent {
+               magnitude: Float = 0, tempo: Float = 0, speed: Float? = nil,
+               x: Float? = nil, y: Float? = nil, size: Float = 0,
+               originX: Float = 0, originY: Float = 0) -> GestureEvent {
         let tr = tracks[i]
         let s = speed ?? tr.speed
         let v = tr.speed
-        return GestureEvent(gesture: id, phase: phase, timestamp: t ?? tr.t, x: tr.x, y: tr.y,
+        return GestureEvent(gesture: id, phase: phase, timestamp: t ?? tr.t, x: x ?? tr.x, y: y ?? tr.y,
                             speed: s,
                             directionX: v > 0 ? tr.vx / v : 0, directionY: v > 0 ? tr.vy / v : 0,
                             fingerCount: UInt8(max(1, fingersDown)),
-                            magnitude: magnitude, tempo: tempo, touchID: UInt16(i))
+                            magnitude: magnitude, tempo: tempo, touchID: UInt16(i),
+                            size: size, originX: originX, originY: originY)
     }
 }

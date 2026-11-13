@@ -35,6 +35,9 @@ final class CanvasView: UIView {
         if let window {
             contentScaleFactor = window.screen.scale
             controller.start()
+            #if DEBUG
+            DispatchQueue.main.async { [weak self] in self?.becomeFirstResponder() }
+            #endif
         } else {
             controller.stop()
         }
@@ -51,6 +54,14 @@ final class CanvasView: UIView {
         hud.frame = CGRect(x: inset.left + 12, y: inset.top + 8, width: bounds.width - inset.left - inset.right - 24, height: 120)
         #endif
     }
+
+    #if DEBUG
+    // Shake to undo until the Undo button arrives in M7 (Simulator: Device → Shake).
+    override var canBecomeFirstResponder: Bool { true }
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake { controller.undo() }
+    }
+    #endif
 
     // MARK: Touches. Kept minimal: queue events, start the latency clock, return.
 

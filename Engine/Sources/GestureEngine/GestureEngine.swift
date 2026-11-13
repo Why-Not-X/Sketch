@@ -15,7 +15,12 @@ public final class GestureEngine {
         state = EngineState(config: config)
         let ordered: [Recognizer] = [
             TapRecognizer(), DoubleTapRecognizer(), TripleTapRecognizer(), RhythmRecognizer(),
-            LongPressRecognizer(), HoldReleaseRecognizer(), DrawRecognizer(),
+            LongPressRecognizer(), HoldDragRecognizer(), HoldReleaseRecognizer(),
+            // These claim a stroke, so they run before G7 on every move.
+            SlingshotRecognizer(), ScribbleRecognizer(), DwellRecognizer(),
+            // After-the-fact shapes, first match wins at lift.
+            CircleRecognizer(), SpiralRecognizer(), ZigzagRecognizer(), FlickRecognizer(),
+            DrawRecognizer(),
             LiftOffRecognizer(),   // fallback: must stay last
         ]
         // Stable sort by category. Within a category, list order is kept.

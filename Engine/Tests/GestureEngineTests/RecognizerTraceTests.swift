@@ -169,7 +169,8 @@ final class RecognizerTraceTests: XCTestCase {
     }
 
     func testG31CarriesSpeedAtLiftAfterStroke() {
-        var b = TraceBuilder(); b.drag(at: 0, from: (100, 100), to: (400, 100), duration: 0.2)
+        // Long enough not to be a flick (G8), still moving fast at the lift.
+        var b = TraceBuilder(); b.drag(at: 0, from: (100, 100), to: (700, 100), duration: 0.5)
         let e = runTrace(b.events).first(.g31, .fired)
         XCTAssertNotNil(e)
         XCTAssertGreaterThan(e!.speed, 1000)

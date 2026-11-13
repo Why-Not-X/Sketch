@@ -52,6 +52,45 @@ Decisions taken (please check):
 - **Hold then move:** after a G5 hold, moving cancels it and draws nothing. M3 turns this into G14 (hold-drag).
 - **Two-finger strokes:** a second finger cancels taps and holds, but each finger can still draw. M4 replaces this with G16 to G26.
 
+## M3 Single-finger depth: done in unit tests and the Simulator, not yet on a device
+
+Built:
+- **Mid-stroke upgrades (R1):**
+  - G9 scribble: 3 or more reversals within 1 s inside 120 pt. It cancels G7, then erases ink under the finger, splitting strokes, with dissolve particles drifting up.
+  - G15 dwell: a pause of 300 ms or more mid-stroke grows an ink blot, which is saved with the stroke.
+- **After-the-fact shapes (R3), classified at lift with the first match winning:**
+  - G10 circle: snaps into a clean ring kept as ink, plus 3 echo rings 150 ms apart.
+  - G11 spiral: an inward spiral pulls particles into a vortex that ends in a flash; an outward one swirls particles away.
+  - G12 zigzag: the stroke turns into a flickering, branching electric arc with sparks.
+  - G8 flick: a short, fast stroke lifted while moving becomes a comet that slows with drag and bounces off the screen edges.
+- **G13 slingshot:** tap, then a quick second touch near it and drag. An elastic line runs from the anchor to the finger; on release it snaps back and launches particles toward the anchor. Draws no ink.
+- **G14 hold-drag:** a G5 hold that starts moving. The orb follows the finger and leaves a light trail.
+- **Undo history** (`InkHistory`, 64 steps): every ink change is one step. A scribble erase is one undo. A stroke consumed by G8 or G12 never becomes ink, but one undo brings it back (R3). There's no Undo button until M7, so for now **shake the device to undo** (debug builds; in the Simulator, Device → Shake).
+
+Ran:
+- 89 unit tests pass. Every gesture G8 to G15 has positive and near-miss traces, for example:
+  - a flick versus a long stroke that ends fast
+  - a scribble versus a wide back-and-forth
+  - a circle versus a half circle and a squashed loop
+  - spirals with 1 turn versus 2.2 turns, inward and outward
+  - a zigzag versus a gentle wave
+  - a slingshot versus a late second touch
+  - a hold-drag versus a plain drag
+  - a dwell of 0.6 s versus 0.2 s
+
+  Pencil strokes never upgrade (R6). There are also tests for erase splitting, a whole scribble undoing in one step, a consumed stroke coming back, and the undo depth cap.
+- Simulator, iPhone 17 Pro, scripted demo (`-demo3`): every M3 gesture fired and rendered (screenshots checked). Three shakes undid, in order, the dwell stroke, then the flick, then the zigzag.
+
+**Not verified:** anything on a real device or with a real finger; the feel and thresholds of the shape gestures (all assumed); and the edge-bounce Tick haptic, which waits for the haptics layer in M6.
+
+Gaps and decisions (please check):
+- **Not built yet:** "nearby ink is tugged" (G14) and "nearby ink is pulled into the vortex" (G11). Both need the ink-distortion shader planned for G19, G20 and G27. Pulling existing particles is also not possible yet, because particles move on fixed GPU paths.
+- **Strokes that turn into an effect:** the stroke itself flies off (G8) or becomes the arc (G12), and doesn't stay as ink. Undo brings it back.
+- **Spiral strokes:** the spiral stroke itself stays as ink.
+- **Flick:** needs at least 800 pt/s at lift, a stroke of 350 ms or less, and at least 25 pt of travel, so a long drawing that ends with a fast flourish stays ink.
+- **Zigzag:** needs 3 or more corners sharper than about 75°, over at least 60 pt. The first threshold of 100° missed natural hand-drawn zigzags.
+- **Blots:** in one Simulator run, the dwell stroke left two blots (the second one small). The unit trace gives one. It's probably the demo's injected input stalling for more than 300 ms in the slow Simulator, but check it on a device.
+
 ## Known issues and deviations
 
 - **Metal Toolchain not installed.** Shaders are compiled at launch from `ShaderSource.swift` (`makeLibrary(source:)`), which adds a few ms during warm-up and nothing on the touch path. To precompile instead, install the toolchain with `xcodebuild -downloadComponent MetalToolchain` (about 700 MB) and move the source back to a `.metal` file.

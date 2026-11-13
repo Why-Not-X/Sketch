@@ -1,3 +1,5 @@
+import Foundation
+
 /// One ink vertex, laid out to match `InkVertex` in ShaderSource.swift (7 x Float, 28 bytes).
 public struct InkVertex: Equatable, Sendable {
     public var x: Float
@@ -82,5 +84,22 @@ public enum StrokeTessellator {
         // Linear: straight-sided taper, so the per-point steps line up into a clean cone.
         let c = Swift.min(1, Swift.max(0, x))
         return m + (1 - m) * c
+    }
+}
+
+/// G15 blots: a filled disc drawn with the ink shader. A fan from the center (u = 0)
+/// to the rim (u = 1), so the shader's core edge and glow give a soft, feathered rim.
+public enum BlotTessellator {
+    public static func append(_ b: InkBlot, coreFrac: Float, alpha: Float = 1, segments: Int = 40,
+                              into out: inout [InkVertex]) {
+        guard b.radius > 0 else { return }
+        let outer = b.radius / max(0.05, coreFrac)
+        for k in 0..<segments {
+            let a0 = Float(k) / Float(segments) * 2 * .pi
+            let a1 = Float(k + 1) / Float(segments) * 2 * .pi
+            out.append(InkVertex(x: b.x, y: b.y, u: 0, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1))
+            out.append(InkVertex(x: b.x + outer * cos(a0), y: b.y + outer * sin(a0), u: 1, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1))
+            out.append(InkVertex(x: b.x + outer * cos(a1), y: b.y + outer * sin(a1), u: 1, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1))
+        }
     }
 }

@@ -137,10 +137,11 @@ final class LongPressRecognizer: Recognizer {
     }
 
     override func moved(_ i: Int, _ s: EngineState, _ emit: (GestureEvent) -> Void) {
-        // Moving after the hold breaks it. M3 turns this into G14 (hold-drag).
+        // Moving after the hold hands over to G14 (hold-drag); the orb follows the finger.
         if s.tracks[i].holding && s.tracks[i].maxDisplacement >= s.config.longPressMaxMovement {
             s.tracks[i].holding = false
             s.tracks[i].holdBroken = true
+            s.tracks[i].holdDragging = true
             emit(s.event(id, .cancelled, i))
         }
     }
@@ -193,9 +194,13 @@ final class DrawRecognizer: Recognizer {
 
     override func moved(_ i: Int, _ s: EngineState, _ emit: (GestureEvent) -> Void) {
         let tr = s.tracks[i]
-        if tr.drawing {
+        if tr.drawing && tr.strokeClaimed {
+            // Another gesture took the stroke over mid-way (G9 scribble): no ink.
+            s.tracks[i].drawing = false
+            emit(s.event(id, .cancelled, i))
+        } else if tr.drawing {
             emit(s.event(id, .changed, i))
-        } else if tr.kind == .finger, !tr.holding, !tr.holdBroken,
+        } else if tr.kind == .finger, !tr.holding, !tr.holdBroken, !tr.strokeClaimed,
                   tr.maxDisplacement >= s.config.drawMinMovement {
             s.tracks[i].drawing = true
             emit(s.event(id, .began, i))

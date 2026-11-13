@@ -34,11 +34,20 @@ public struct GestureEvent: Codable, Equatable, Sendable {
     public var tempo: Float
     /// The touch that drives this gesture (the first one, for multi-finger gestures).
     public var touchID: UInt16
+    /// Gesture-specific size in points: circle or spiral radius, scribble extent, etc.
+    public var size: Float
+    /// A second point some gestures carry, such as the slingshot anchor (G13).
+    public var originX: Float
+    public var originY: Float
 
     public init(gesture: GestureID, phase: GesturePhase, timestamp: Double, x: Float, y: Float,
                 speed: Float = 0, directionX: Float = 0, directionY: Float = 0,
-                fingerCount: UInt8 = 1, magnitude: Float = 0, tempo: Float = 0, touchID: UInt16 = 0) {
+                fingerCount: UInt8 = 1, magnitude: Float = 0, tempo: Float = 0, touchID: UInt16 = 0,
+                size: Float = 0, originX: Float = 0, originY: Float = 0) {
         self.touchID = touchID
+        self.size = size
+        self.originX = originX
+        self.originY = originY
         self.gesture = gesture
         self.phase = phase
         self.timestamp = timestamp

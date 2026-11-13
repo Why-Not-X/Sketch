@@ -23,7 +23,7 @@ public final class ResponseMapper {
 
         switch e.phase {
         case .began, .fired:
-            for (slot, spec) in def.effects.enumerated() {
+            for (slot, spec) in def.effects.enumerated() where (spec.spawnOn ?? .start) == .start && passes(spec, e) {
                 let s = spawn(spec, slot: slot, def: def, event: e, boost: boost)
                 visual(.spawn(s))
                 if let trail = spec.trail, e.speed >= trail.minSpeed, trail.count > 0 {
@@ -59,6 +59,9 @@ public final class ResponseMapper {
             for (slot, spec) in def.effects.enumerated() where persistence(spec, def) == .ambient {
                 visual(.release(key: key(e, slot: slot, perTouch: spec.perTouch ?? true)))
             }
+            for (slot, spec) in def.effects.enumerated() where spec.spawnOn == .end && passes(spec, e) {
+                visual(.spawn(spawn(spec, slot: slot, def: def, event: e, boost: boost)))
+            }
 
         case .cancelled:
             // A provisional gesture turned out wrong (R1): fade everything it keyed,
@@ -71,12 +74,20 @@ public final class ResponseMapper {
 
     // MARK: Helpers
 
+    private func passes(_ spec: EffectSpec, _ e: GestureEvent) -> Bool {
+        switch spec.condition {
+        case .none: return true
+        case .magnitudePositive: return e.magnitude > 0
+        case .magnitudeNegative: return e.magnitude < 0
+        }
+    }
+
     private func persistence(_ spec: EffectSpec, _ def: ResponseDefinition) -> Persistence {
         spec.persistence ?? def.persistence
     }
 
     private func isKeyed(_ spec: EffectSpec, _ def: ResponseDefinition) -> Bool {
-        persistence(spec, def) == .ambient || spec.replaces == true
+        (persistence(spec, def) == .ambient && (spec.spawnOn ?? .start) == .start) || spec.replaces == true
     }
 
     /// gesture index | slot | touch. Stable because gesture IDs never change.
@@ -90,6 +101,7 @@ public final class ResponseMapper {
         case .magnitude: return e.magnitude
         case .speed: return e.speed
         case .tempo: return e.tempo
+        case .size: return e.size
         }
     }
 
@@ -123,7 +135,9 @@ public final class ResponseMapper {
             persistence: p,
             tempo: e.tempo,
             directionX: e.directionX, directionY: e.directionY,
-            speed: e.speed
+            speed: e.speed,
+            magnitude: e.magnitude,
+            originX: e.originX, originY: e.originY
         )
     }
 }

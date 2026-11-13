@@ -21,6 +21,39 @@ public enum EffectKind: String, Codable, CaseIterable, Sendable {
     case burst
     /// Ambient particles drifting inward toward the point, emitted at `count` per second.
     case motesInward
+    /// G8: a glowing head that keeps flying with drag, bounces off the screen edges
+    /// and sheds a particle tail.
+    case comet
+    /// G13: an elastic glowing line from the origin (anchor) to the finger. Snaps back
+    /// to the origin when released.
+    case tether
+    /// G13: particles launched from the point toward the origin.
+    case launch
+    /// G11: particles spiralling into the point (positive magnitude) or out of it
+    /// (negative magnitude).
+    case vortex
+    /// G12: a flickering jagged arc along the stroke path supplied by the canvas.
+    case arc
+    /// G9: style for the particles that erased ink dissolves into. The canvas emits
+    /// them where ink was actually erased.
+    case dissolve
+    /// G14: an ambient emitter leaving a short light trail wherever it moves.
+    case trail
+    /// G15: an ink blot. Handled by the canvas as ink, not as an effect.
+    case blot
+}
+
+/// When an effect spawns.
+public enum SpawnMoment: String, Codable, Sendable {
+    /// On `began` or `fired` (the default).
+    case start
+    /// On `ended`, such as the slingshot launch on release.
+    case end
+}
+
+/// Spawns the effect only when the gesture's magnitude has this sign (G11 inward vs outward).
+public enum EffectCondition: String, Codable, Sendable {
+    case magnitudePositive, magnitudeNegative
 }
 
 public enum Easing: String, Codable, Sendable {
@@ -44,7 +77,7 @@ public enum ColorRole: String, Codable, Sendable {
 
 /// Which gesture parameter drives a scale factor.
 public enum ScaleSource: String, Codable, Sendable {
-    case magnitude, speed, tempo
+    case magnitude, speed, tempo, size
 }
 
 /// Maps an input range linearly onto an output factor range, clamped.
@@ -54,8 +87,11 @@ public struct ScaleRule: Codable, Equatable, Sendable {
     public var inMax: Float
     public var outMin: Float
     public var outMax: Float
+    /// Use the absolute value of the input (G11 turns are signed by direction).
+    public var absolute: Bool?
 
-    public func factor(for value: Float) -> Float {
+    public func factor(for raw: Float) -> Float {
+        let value = absolute == true ? abs(raw) : raw
         guard inMax != inMin else { return outMax }
         let k = min(1, max(0, (value - inMin) / (inMax - inMin)))
         return outMin + (outMax - outMin) * k
@@ -97,6 +133,8 @@ public struct EffectSpec: Codable, Equatable, Sendable {
     public var replaces: Bool?
     /// Keyed effects are per touch by default; false makes one per gesture.
     public var perTouch: Bool?
+    public var spawnOn: SpawnMoment?
+    public var condition: EffectCondition?
 
     public init(kind: EffectKind, radius: Float) {
         self.kind = kind
@@ -127,6 +165,9 @@ public struct EffectSpawn: Equatable, Sendable {
     public var directionX: Float
     public var directionY: Float
     public var speed: Float
+    public var magnitude: Float
+    public var originX: Float
+    public var originY: Float
 }
 
 public enum EffectCommand: Equatable, Sendable {

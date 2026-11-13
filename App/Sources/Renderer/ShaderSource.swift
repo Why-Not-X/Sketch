@@ -114,8 +114,9 @@ enum ShaderSource {
         float radius;
         float thickness;
         float alpha;
-        float shape;          // 0 ring, 1 soft disc, 2 bright dot
+        float shape;          // 0 ring, 1 soft disc, 2 bright dot, 3 glowing line (center → p2)
         packed_float3 color;
+        packed_float2 p2;
     };
 
     struct EffectOut {
@@ -132,14 +133,29 @@ enum ShaderSource {
                                    const device EffectInstance* inst [[buffer(0)]],
                                    constant Uniforms& U [[buffer(1)]]) {
         EffectInstance e = inst[iid];
-        float extent = e.shape < 0.5 ? e.radius + e.thickness * 3.0
-                     : (e.shape < 1.5 ? e.radius : e.radius * 2.0);
         const float2 corners[6] = { float2(-1, -1), float2(1, -1), float2(-1, 1),
                                     float2(1, -1), float2(1, 1), float2(-1, 1) };
         EffectOut o;
-        o.local = corners[vid] * extent;
-        o.position = ptToClip(float2(e.center) + o.local, U);
-        o.radius = e.radius;
+        float2 c = corners[vid];
+        if (e.shape > 2.5) {
+            // Line: a quad along the segment, in segment space (x along, y across).
+            float2 a = float2(e.center), b = float2(e.p2);
+            float len = length(b - a);
+            float2 dir = len > 1e-3 ? (b - a) / len : float2(1, 0);
+            float2 nrm = float2(-dir.y, dir.x);
+            float ext = max(e.thickness, 0.5) * 3.0;
+            float lx = c.x < 0.0 ? -ext : len + ext;
+            float ly = c.y * ext;
+            o.local = float2(lx, ly);
+            o.position = ptToClip(a + dir * lx + nrm * ly, U);
+            o.radius = len;
+        } else {
+            float extent = e.shape < 0.5 ? e.radius + e.thickness * 3.0
+                         : (e.shape < 1.5 ? e.radius : e.radius * 2.0);
+            o.local = c * extent;
+            o.position = ptToClip(float2(e.center) + o.local, U);
+            o.radius = e.radius;
+        }
         o.thickness = e.thickness;
         o.alpha = e.alpha;
         o.shape = e.shape;
@@ -150,7 +166,11 @@ enum ShaderSource {
     fragment float4 effect_fragment(EffectOut in [[stage_in]]) {
         float d = length(in.local);
         float a;
-        if (in.shape < 0.5) {
+        if (in.shape > 2.5) {
+            float along = in.local.x - clamp(in.local.x, 0.0, in.radius);
+            float dl = length(float2(along, in.local.y)) / max(in.thickness, 0.5);
+            a = exp(-dl * dl) + 0.6 * exp(-dl * dl * 9.0);
+        } else if (in.shape < 0.5) {
             float x = (d - in.radius) / max(in.thickness, 0.5);
             a = exp(-x * x);
         } else if (in.shape < 1.5) {
@@ -176,6 +196,10 @@ enum ShaderSource {
         float drag;
         float alpha;
         packed_float3 color;
+        float mode;           // 0 linear with drag, 1 spiral around origin
+        float p1;             // spiral: end radius
+        float p2;             // spiral: angular speed (rad/s)
+        float pad;
     };
 
     struct ParticleOut {
@@ -198,9 +222,18 @@ enum ShaderSource {
             o.color = float3(0.0);
             return o;
         }
-        float k = max(p.drag, 1e-3);
-        float2 pos = float2(p.origin) + float2(p.vel) * (1.0 - exp(-k * t)) / k;
         float f = 1.0 - t / p.life;
+        float2 pos;
+        if (p.mode > 0.5) {
+            // vel = (start radius, start angle). Radius eases toward p1; angle spins at p2.
+            float e = 1.0 - pow(f, 2.0);
+            float r = mix(p.vel.x, p.p1, e);
+            float ang = p.vel.y + p.p2 * t;
+            pos = float2(p.origin) + r * float2(cos(ang), sin(ang));
+        } else {
+            float k = max(p.drag, 1e-3);
+            pos = float2(p.origin) + float2(p.vel) * (1.0 - exp(-k * t)) / k;
+        }
         o.position = ptToClip(pos, U);
         o.pointSize = max(1.0, p.size * U.pixelScale * (0.6 + 0.4 * f));
         o.alpha = p.alpha * pow(f, 1.5);
