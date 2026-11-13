@@ -23,6 +23,16 @@ Add a launch argument under Product → Scheme → Edit Scheme… → Run → Ar
 
 In debug builds every recognized gesture is also logged (subsystem `TouchWhiteboard`, category `gestures`).
 
+## Measuring performance
+
+Use a **Release** build (Debug is about 20× slower in the hot paths) and add a launch argument:
+
+- `-hud`: shows the latency, frame-rate and frame-cost overlay in Release
+- `-stress`: 20 s of triple taps and five-finger splashes, then a `STRESS RESULT` line in the log (category `perf`)
+- `-stress-cap`: the same, with the particle buffer held at its 3,000 cap
+
+What to measure on which device is in `DEVICE_TESTING.md`.
+
 ## Layout
 
 - `Engine/`: Swift Package (`GestureEngine`, `InkModel`, `ResponseMapping`), pure Swift. Test with `cd Engine && swift test`.

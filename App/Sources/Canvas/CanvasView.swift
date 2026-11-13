@@ -8,9 +8,7 @@ final class CanvasView: UIView {
     var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
     let controller: CanvasController
-    #if DEBUG
     private let hud = UILabel()
-    #endif
 
     init() {
         controller = CanvasController()
@@ -18,14 +16,14 @@ final class CanvasView: UIView {
         isMultipleTouchEnabled = true
         isOpaque = true
         controller.attach(to: metalLayer)
-        #if DEBUG
-        hud.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        hud.textColor = UIColor(white: 1, alpha: 0.55)
-        hud.numberOfLines = 0
-        hud.isUserInteractionEnabled = false
-        addSubview(hud)
-        controller.latency.onReport = { [weak self] text in self?.hud.text = text }
-        #endif
+        if Diagnostics.enabled {
+            hud.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            hud.textColor = UIColor(white: 1, alpha: 0.55)
+            hud.numberOfLines = 0
+            hud.isUserInteractionEnabled = false
+            addSubview(hud)
+            controller.latency.onReport = { [weak self] text in self?.hud.text = text }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -34,6 +32,7 @@ final class CanvasView: UIView {
         super.didMoveToWindow()
         if let window {
             contentScaleFactor = window.screen.scale
+            controller.setMaxFPS(window.screen.maximumFramesPerSecond)
             controller.start()
             DispatchQueue.main.async { [weak self] in self?.becomeFirstResponder() }
         } else {
@@ -47,11 +46,9 @@ final class CanvasView: UIView {
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         controller.resize(to: bounds.size, scale: Float(scale))
-        #if DEBUG
         let inset = safeAreaInsets
         // Leaves the top-right corner to the controls.
         hud.frame = CGRect(x: inset.left + 12, y: inset.top + 8, width: bounds.width - inset.left - inset.right - 190, height: 120)
-        #endif
     }
 
     // R8: opt out of iPadOS three-finger editing gestures (undo/redo swipe, copy/paste

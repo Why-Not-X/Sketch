@@ -63,6 +63,13 @@ final class EffectSystem {
     let particleCapacity: Int
     private var nextParticle = 0
     private(set) var particlesSpawned = 0
+    /// When each particle slot expires (GPU time), for counting live particles.
+    private var expiry: [Float]
+    /// Live particles at the start of this frame.
+    private(set) var liveParticles = 0
+    /// R4 graceful degradation: new effects spawn fewer particles as the buffer fills,
+    /// so the cap is approached smoothly instead of constantly overwriting live ones.
+    private(set) var spawnScale: Float = 1
     private var lastFrame: Double = 0
 
     /// Canvas size in points, for comet bounces.
@@ -81,6 +88,7 @@ final class EffectSystem {
         self.particleCapacity = particleCapacity
         self.particles = particleBuffer.bindMemory(to: Particle.self, capacity: particleCapacity)
         self.timeBase = timeBase
+        self.expiry = [Float](repeating: -1e9, count: particleCapacity)
         effects.reserveCapacity(Self.maxEffects)
         for i in 0..<particleCapacity {
             particles[i] = Particle(ox: 0, oy: 0, vx: 0, vy: 0, t0: -1e9, life: 0, size: 0, drag: 1, alpha: 0, r: 0, g: 0, b: 0)
@@ -148,7 +156,7 @@ final class EffectSystem {
         guard !points.isEmpty, let style = effects.last(where: { $0.s.kind == .dissolve && $0.releasedAt == nil })?.s else { return }
         let c = theme.color(style.color)
         let perPoint = max(1, style.count)
-        let stride = max(1, points.count * perPoint / 90)   // at most ~90 particles per call
+        let stride = max(1, points.count * perPoint / scaled(90))   // at most ~90 particles per call
         let life = Float(style.duration ?? 1)
         var k = 0
         for p in points {
@@ -166,6 +174,7 @@ final class EffectSystem {
     // MARK: Per frame
 
     func frame(now: Double, into out: inout [EffectInstance]) {
+        updateBudget(now)
         let dt = Float(lastFrame > 0 ? min(0.05, now - lastFrame) : 0)
         lastFrame = now
         distortions.removeAll(keepingCapacity: true)
@@ -345,7 +354,7 @@ final class EffectSystem {
             }
         }
         effects[index] = q
-        let rate = Double(max(1, q.s.count))
+        let rate = Double(max(1, q.s.count)) * Double(spawnScale)
         let due = Int((now - q.lastEmit) * rate)
         guard due > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
@@ -396,8 +405,8 @@ final class EffectSystem {
         let reach = drag / (1 - exp(-drag * life))
         let c = theme.color(s.color)
         let t0 = gpuTime(now + s.delay)
-        for k in 0..<max(1, s.count) {
-            let angle = (Float(k) + Float.random(in: 0..<0.8)) / Float(max(1, s.count)) * 2 * .pi
+        for k in 0..<scaled(max(1, s.count)) {
+            let angle = (Float(k) + Float.random(in: 0..<0.8)) / Float(scaled(max(1, s.count))) * 2 * .pi
             let v = s.radius * reach * Float.random(in: 0.55...1.0)
             emit(Particle(ox: s.x, oy: s.y, vx: cos(angle) * v, vy: sin(angle) * v, t0: t0,
                           life: life * Float.random(in: 0.7...1.0), size: Float.random(in: 3...6),
@@ -408,7 +417,7 @@ final class EffectSystem {
     private func spawnArcSparks(_ path: [SIMD2<Float>], _ s: EffectSpawn, now: Double) {
         guard !path.isEmpty else { return }
         let c = theme.color(s.color)
-        for _ in 0..<min(24, path.count) {
+        for _ in 0..<scaled(min(24, path.count)) {
             let q = path[Int.random(in: 0..<path.count)]
             let ang = Float.random(in: 0..<(2 * .pi)), v = Float.random(in: 60...180)
             emit(Particle(ox: q.x, oy: q.y, vx: cos(ang) * v, vy: sin(ang) * v, t0: gpuTime(now),
@@ -425,7 +434,7 @@ final class EffectSystem {
         let drag: Float = 2
         let reach = drag / (1 - exp(-drag * life))
         let c = theme.color(s.color)
-        for _ in 0..<max(1, s.count) {
+        for _ in 0..<scaled(max(1, s.count)) {
             let ang = base + Float.random(in: -0.3...0.3)
             let v = s.radius * reach * Float.random(in: 0.6...1.1)
             emit(Particle(ox: s.x, oy: s.y, vx: cos(ang) * v, vy: sin(ang) * v, t0: gpuTime(now),
@@ -439,7 +448,7 @@ final class EffectSystem {
         let inward = s.magnitude >= 0
         let life = Float(s.duration ?? 1.2)
         let c = theme.color(s.color)
-        for _ in 0..<max(1, s.count) {
+        for _ in 0..<scaled(max(1, s.count)) {
             let r0 = inward ? s.radius * Float.random(in: 0.35...1) : Float.random(in: 0...12)
             let r1 = inward ? s.radius * 0.02 : s.radius * Float.random(in: 0.6...1.2)
             let spin = (inward ? Float.random(in: 5...8) : Float.random(in: 2.5...4.5))
@@ -492,7 +501,7 @@ final class EffectSystem {
                     (s.originX, s.originY), (-s.originX, -s.originY)]
         let drag: Float = 4
         let reach = drag / (1 - exp(-drag * life))
-        for k in 0..<max(1, s.count) {
+        for k in 0..<scaled(max(1, s.count)) {
             let d = dirs[k % 4]
             let base = atan2(d.1, d.0) + Float.random(in: -0.25...0.25)
             let v = s.radius * reach * Float.random(in: 0.5...1.1)
@@ -502,10 +511,27 @@ final class EffectSystem {
         }
     }
 
+    /// Stress testing only (`-stress-cap`): requests `count` long-lived particles at
+    /// once, through the same graceful degradation as real effects, to hold the buffer
+    /// at its cap.
+    func flood(count: Int, x: Float, y: Float, now: Double) {
+        let c = theme.sparkle
+        for _ in 0..<scaled(count) {
+            let ang = Float.random(in: 0..<(2 * .pi)), v = Float.random(in: 40...260)
+            emit(Particle(ox: x, oy: y, vx: cos(ang) * v, vy: sin(ang) * v, t0: gpuTime(now), life: 3,
+                          size: Float.random(in: 3...6), drag: 1.5, alpha: 0.9, r: c.r, g: c.g, b: c.b))
+        }
+    }
+
+    /// Lowest spawn scale reached (for the stress report).
+    var minSpawnScale: Float { spawnScaleFloor }
+    private var spawnScaleFloor: Float = 1
+    func resetSpawnScaleFloor() { spawnScaleFloor = 1 }
+
     /// G32: slow motes, mostly anywhere, some near the last touch.
     private func emitDrift(index: Int, now: Double) {
         let s = effects[index].s
-        let rate = Double(max(1, s.count))
+        let rate = Double(max(1, s.count)) * Double(spawnScale)
         let due = Int((now - effects[index].lastEmit) * rate)
         guard due > 0, bounds.w > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
@@ -525,7 +551,7 @@ final class EffectSystem {
         let life = Float(s.duration ?? 3)
         let c = theme.color(s.color)
         let spin: Float = s.tempo != 0 ? max(-8, min(8, s.tempo)) : 2.5
-        for _ in 0..<max(1, s.count) {
+        for _ in 0..<scaled(max(1, s.count)) {
             let r = max(8, s.radius) * Float.random(in: 0.75...1.2)
             emit(Particle(ox: s.x, oy: s.y, vx: r, vy: Float.random(in: 0..<(2 * .pi)), t0: gpuTime(now),
                           life: life * Float.random(in: 0.7...1), size: Float.random(in: 2.5...4.5), drag: 1,
@@ -539,7 +565,7 @@ final class EffectSystem {
         let e = effects[index]
         let n = e.points.count / 2
         guard n >= 2 else { return }
-        let rate = Double(max(1, e.s.count))
+        let rate = Double(max(1, e.s.count)) * Double(spawnScale)
         let due = Int((now - e.lastEmit) * rate)
         guard due > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
@@ -555,7 +581,7 @@ final class EffectSystem {
 
     private func emitMotes(index: Int, now: Double) {
         let s = effects[index].s
-        let rate = Double(max(1, s.count))
+        let rate = Double(max(1, s.count)) * Double(spawnScale)
         let due = Int((now - effects[index].lastEmit) * rate)
         guard due > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
@@ -575,7 +601,7 @@ final class EffectSystem {
     /// G14: drops short-lived glow particles behind the moving orb.
     private func emitTrail(index: Int, now: Double) {
         let s = effects[index].s
-        let rate = Double(max(1, s.count))
+        let rate = Double(max(1, s.count)) * Double(spawnScale)
         let due = Int((now - effects[index].lastEmit) * rate)
         guard due > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
@@ -590,11 +616,28 @@ final class EffectSystem {
         effects[index].px = s.x; effects[index].py = s.y
     }
 
+    /// Counts live particles and sets the spawn scale: full below 70% of the cap,
+    /// falling to 20% as the buffer fills.
+    private func updateBudget(_ now: Double) {
+        let t = gpuTime(now)
+        var live = 0
+        for k in 0..<particleCapacity where expiry[k] > t { live += 1 }
+        liveParticles = live
+        let soft = Float(particleCapacity) * 0.7
+        let fill = Float(live)
+        spawnScale = fill <= soft ? 1 : max(0.2, (Float(particleCapacity) - fill) / (Float(particleCapacity) - soft))
+        spawnScaleFloor = min(spawnScaleFloor, spawnScale)
+    }
+
+    /// A particle count after graceful degradation (never below 1).
+    private func scaled(_ n: Int) -> Int { max(1, Int((Float(n) * spawnScale).rounded())) }
+
     /// Writes into the ring buffer. At the cap the oldest particle is overwritten (R4).
     /// A slot may be rewritten while an in-flight frame reads it; the worst case is one
     /// particle drawn in a mixed state for one frame.
     private func emit(_ p: Particle) {
         particles[nextParticle] = p
+        expiry[nextParticle] = p.t0 + p.life
         nextParticle = (nextParticle + 1) % particleCapacity
         particlesSpawned += 1
     }

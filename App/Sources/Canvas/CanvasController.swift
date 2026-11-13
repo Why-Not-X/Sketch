@@ -5,9 +5,7 @@ import InkModel
 import ResponseMapping
 import os
 
-#if DEBUG
 private let gestureLogger = Logger(subsystem: "TouchWhiteboard", category: "gestures")
-#endif
 
 /// Runs the frame loop. Data flows one way:
 /// input (TouchEvents) → gesture engine (GestureEvents) → response mapper
@@ -23,6 +21,10 @@ private let gestureLogger = Logger(subsystem: "TouchWhiteboard", category: "gest
 final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTesting {
     let input = TouchInput()
     let latency = LatencyMonitor()
+    let perf = PerfMonitor()
+    private var maxFPS = 120
+    private var gestureText = ""
+    private var hudFrames = 0
 
     private var renderer: MetalRenderer?
     private var effects: EffectSystem?
@@ -88,9 +90,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     private let eraseRadius: Float
     private static let blotCoreFrac: Float = 0.62
 
-    #if DEBUG
     private var gestureLog: [String] = []
-    #endif
 
     override init() {
         let set = ResponseSet.base
@@ -128,12 +128,10 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         link.preferredFrameRateRange = Self.activeRate
         link.add(to: .main, forMode: .common)
         self.link = link
-        #if DEBUG
         DemoScript.startIfRequested(input: input, size: { [weak self] in
             guard let s = self?.space else { return (0, 0) }
             return (s.width, s.height)
-        })
-        #endif
+        }, perf: perf, controller: self)
     }
 
     func stop() {
@@ -150,9 +148,25 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
 
     /// Called straight from touchesBegan: leaves idle at once, so the frame after the
     /// touch is already back at full rate (R4: any touch interrupts idle instantly).
+    /// Stress testing (`-stress-cap`): floods particles at a random spot.
+    func stressFlood(count: Int) {
+        effects?.flood(count: count, x: Float.random(in: 0...space.width), y: Float.random(in: 0...space.height),
+                       now: CACurrentMediaTime())
+    }
+
+    var stressSpawnFloor: Float { effects?.minSpawnScale ?? 1 }
+    func resetStressSpawnFloor() { effects?.resetSpawnScaleFloor() }
+
+    /// The display's top refresh rate, for counting dropped frames.
+    func setMaxFPS(_ fps: Int) {
+        maxFPS = max(60, fps)
+        perf.targetFrameTime = 1 / Double(min(120, maxFPS))
+    }
+
     func wake() {
         guard idle else { return }
         idle = false
+        perf.targetFrameTime = 1 / Double(min(120, maxFPS))
         link?.preferredFrameRateRange = Self.activeRate
         dimTarget = 1
         dim = 1
@@ -238,9 +252,12 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
         guard let renderer, let effects else { return }
         frameNow = CACurrentMediaTime()
-        #if DEBUG
+        perf.frameBegan(at: frameNow)
+        defer {
+            perf.frameEnded(particles: effects.liveParticles, effects: effects.liveEffectCount,
+                            skippedTotal: renderer.skippedFrames)
+        }
         input.deliverScripted(upTo: frameNow)
-        #endif
 
         var newestRealTouch: Double = 0
         input.drain { e in
@@ -303,9 +320,12 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
                                    distortions: effects.distortionBlock(),
                                    time: effects.gpuTime(frameNow), dim: dim, shimmer: shimmer,
                                    space: space, pixelScale: pixelScale)
-        renderer.render(drawable: update.drawable, content) { [latency] presentedTime in
+        renderer.render(drawable: update.drawable, content) { [latency, perf] presentedTime in
             latency.framePresented(at: presentedTime, downs: pendingDowns, newestMove: newestRealTouch)
+            DispatchQueue.main.async { perf.presented(at: presentedTime) }
         }
+        hudFrames += 1
+        if Diagnostics.enabled && hudFrames % 20 == 0 { latency.note = gestureText + "\n" + perf.hudLine }
     }
 
     // MARK: Gestures → ink and responses
@@ -361,6 +381,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
             fillShape[i] = true
         case (.g32, .began):
             idle = true
+            perf.targetFrameTime = 1.0 / 30
             link?.preferredFrameRateRange = Self.idleRate
         case (.g32, .changed):
             // Everything dims after about 30 s of quiet.
@@ -384,9 +405,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         }
         mapper.map(g, visual: { applyVisual($0, slot: slot ? i : nil) },
                    haptic: { haptics?.handle($0) })
-        #if DEBUG
         logGesture(g)
-        #endif
     }
 
     /// Routes visual commands. G15 blots are ink, so they stay on the canvas side.
@@ -561,8 +580,8 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         return InkBlot(x: c.x, y: c.y, radius: b.radius / space.unit)
     }
 
-    #if DEBUG
     private func logGesture(_ g: GestureEvent) {
+        guard Diagnostics.enabled else { return }
         let mark: String
         switch g.phase {
         case .began: mark = "↓"
@@ -574,9 +593,6 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         gestureLog.append(g.gesture.rawValue + mark)
         gestureLogger.notice("\(g.gesture.rawValue, privacy: .public)\(mark, privacy: .public) mag \(g.magnitude, privacy: .public) speed \(Int(g.speed), privacy: .public) n \(g.fingerCount, privacy: .public)")
         if gestureLog.count > 10 { gestureLog.removeFirst() }
-        latency.note = "gestures: " + gestureLog.joined(separator: " ")
-            + String(format: "\nfx %d  particles %d  undo %@", effects?.liveEffectCount ?? 0,
-                     effects?.particleDrawCount ?? 0, history.canUndo ? "yes" : "no")
+        gestureText = "gestures: " + gestureLog.joined(separator: " ")
     }
-    #endif
 }

@@ -1,7 +1,7 @@
-#if DEBUG
 import QuartzCore
 import Foundation
 import GestureEngine
+import os
 
 /// Debug-only scripted input for checking gestures where nobody can touch the screen
 /// (headless Simulator runs). Launch with `-demo`. Events go through the normal
@@ -13,8 +13,14 @@ import GestureEngine
 enum DemoScript {
     private struct Step { var at: Double; var id: UInt16; var phase: TouchPhase; var x: Float; var y: Float }
 
-    static func startIfRequested(input: TouchInput, size: @escaping () -> (Float, Float)) {
+    static func startIfRequested(input: TouchInput, size: @escaping () -> (Float, Float), perf: PerfMonitor,
+                                 controller: CanvasController) {
         let args = ProcessInfo.processInfo.arguments
+        if args.contains("-stress") || args.contains("-stress-cap") {
+            startStress(input: input, size: size, perf: perf, controller: controller,
+                        atCap: args.contains("-stress-cap"))
+            return
+        }
         let m3 = args.contains("-demo3"), m4 = args.contains("-demo4"), m5 = args.contains("-demo5")
         guard args.contains("-demo") || m3 || m4 || m5 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -168,6 +174,74 @@ enum DemoScript {
         return out
     }
 
+    /// M8 worst case (`-stress`): 20 strokes for ink to distort (about 8.5 s), then 20 s of G3 triple
+    /// taps at random spots alternating with G23 five-finger splashes (about 1.3 of each
+    /// per second). Measurement covers only the 20 s of spam and ends with a
+    /// "STRESS RESULT" line in the perf log.
+    /// With `atCap`, extra particle floods (1,200 every 0.4 s, 3 s life) hold the buffer
+    /// at its 3,000 cap for the whole run, to check behaviour at the cap (R4).
+    private static func startStress(input: TouchInput, size: @escaping () -> (Float, Float), perf: PerfMonitor,
+                                    controller: CanvasController, atCap: Bool) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let (w, h) = size()
+            var rng = SystemRandomNumberGenerator()
+            var out: [Step] = []
+            for k in 0..<20 {                                   // ink to distort (0.4 s each: not flicks)
+                let y = h * (0.08 + 0.25 * Float(k) / 20)   // top third, clear of the tap area
+                for j in 0...12 {
+                    out.append(Step(at: Double(k) * 0.42 + Double(j) * 0.033, id: 20,
+                                    phase: j == 0 ? .began : (j == 12 ? .ended : .moved),
+                                    x: w * (0.1 + 0.8 * Float(j) / 12), y: y + 20 * sin(Float(j))))
+                }
+            }
+            var t = 9.0
+            while t < 29 {
+                let x = Float.random(in: w * 0.15...w * 0.85, using: &rng)
+                let y = Float.random(in: h * 0.42...h * 0.9, using: &rng)   // off the ink, so taps stay G3
+                for k in 0..<3 {                                  // G3
+                    out.append(Step(at: t + Double(k) * 0.09, id: 20, phase: .began, x: x, y: y))
+                    out.append(Step(at: t + Double(k) * 0.09 + 0.04, id: 20, phase: .ended, x: x, y: y))
+                }
+                let cx = Float.random(in: w * 0.3...w * 0.7, using: &rng)
+                let cy = Float.random(in: h * 0.5...h * 0.8, using: &rng)
+                for f in 0..<5 {                                  // G23
+                    let a = Float(f) / 5 * 2 * .pi
+                    out.append(Step(at: t + 0.4 + Double(f) * 0.01, id: UInt16(21 + f), phase: .began,
+                                    x: cx + 60 * cos(a), y: cy + 60 * sin(a)))
+                    out.append(Step(at: t + 0.5 + Double(f) * 0.002, id: UInt16(21 + f), phase: .ended,
+                                    x: cx + 60 * cos(a), y: cy + 60 * sin(a)))
+                }
+                t += 0.75
+            }
+            let t0 = CACurrentMediaTime()
+            input.schedule(out.map {
+                TouchEvent(touchID: $0.id, phase: $0.phase, kind: .finger, timestamp: t0 + $0.at,
+                           x: $0.x, y: $0.y, majorRadius: 12)
+            })
+            let log = Logger(subsystem: "TouchWhiteboard", category: "perf")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+                perf.reset()
+                controller.resetStressSpawnFloor()
+            }
+            if atCap {
+                for k in 0..<50 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8.5 + Double(k) * 0.4) {
+                        controller.stressFlood(count: 1200)
+                    }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                #if targetEnvironment(simulator)
+                let prefix = "SIMULATOR (not a device measurement) "
+                #else
+                let prefix = ""
+                #endif
+                let mode = atCap ? "AT CAP " : ""
+                log.notice("STRESS RESULT \(mode, privacy: .public)\(prefix, privacy: .public)\(perf.summary(perf.total), privacy: .public)  lowest spawn scale \(controller.stressSpawnFloor, privacy: .public)")
+            }
+        }
+    }
+
     /// M5 timeline (`-demo5`): 0.0 line · 0.8 tap on it (G27) · 1.8 stroke across it
     /// (G28) · 2.8 closed square (G29) · 4.6 left-edge touch, 5.2 bottom-edge touch
     /// (G30) · then quiet: idle (G32) from about 10 s, dimming after 40 s · 44 s a tap wakes it.
@@ -203,4 +277,3 @@ enum DemoScript {
         return out
     }
 }
-#endif

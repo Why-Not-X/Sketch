@@ -269,6 +269,62 @@ Decisions (please check):
 - **Placement:** the buttons sit in the top-right corner. If they get in the way of drawing, bottom-right is the alternative.
 - **Debug only:** the HUD and shake-to-undo remain in debug builds only.
 
+## M8 Hardening: tooling built and measured in the Simulator; device pass/fail still due
+
+Built:
+- **Performance monitor:** per frame it records CPU time, presented-frame intervals, drops (later than 1.5× the target) and GPU-busy skips, plus live particles and effects.
+  - Each frame is a `Frame` signpost for Instruments, and there's a report every 5 s (log category `perf`) plus a HUD line.
+  - The target frame time follows the display (1/120 or 1/60) and switches to 1/30 while idle.
+- **Graceful degradation (R4):** live particles are counted every frame. Above 70% of the 3,000 cap, new effects spawn proportionally fewer particles, down to 20% at the cap. At the cap the oldest particles are overwritten. The renderer never blocks on the GPU; it skips a frame instead.
+- **Stress tests:**
+  - `-stress`: 20 strokes, then 20 s of G3 triple taps alternating with G23 five-finger splashes.
+  - `-stress-cap`: the same, plus particle floods that hold the buffer at 3,000.
+  - Each ends with a `STRESS RESULT` log line.
+- **Diagnostics in Release:** the HUD, gesture log, demos and stress tests now run in Release builds when launched with `-hud`, `-stress`, `-stress-cap` or a demo argument. That's where performance has to be measured.
+- **Ink cost benchmark** (`InkPerformanceTests`): 300 strokes × 200 points.
+
+Measured (none of these are device numbers):
+
+| What | Where | Result |
+|---|---|---|
+| Full ink rebuild, 60,000 points | Mac, release | 1.28 ms (debug: 26 ms) |
+| One scribble-erase step on that canvas | Mac, release | 0.16 ms |
+| Hit test / crossing test / index rebuild | Mac, release | 0.02 / 0.10 / 0.21 ms |
+| `-stress` (27 G3 + 27 G23 in 20 s) | iPhone 17 Pro Simulator, Release | CPU per frame p50 0.24, p95 0.57, max 1.22 ms; peak 306 particles; no degradation needed; 0 GPU-busy skips |
+| `-stress-cap` | iPhone 17 Pro Simulator, Release | CPU p50 0.25, p95 0.60, max 2.34 ms; 3,000 particles held; spawn scale down to 0.2; 0 skips |
+| `-stress-cap` | iPad Pro 13" Simulator, Release | CPU p50 0.25, p95 0.59, max 1.24 ms; 3,000 particles; 0.2; 0 skips |
+
+Reading the numbers:
+- **CPU side:** under 1 ms at p95 even at the cap, against an 8.3 ms budget at 120 Hz. A phone CPU is slower than this Mac, but there's a wide margin.
+- **Realistic spam:** humanly possible spam peaks around 300–850 particles, far below the cap.
+- **"Dropped" counts are meaningless here.** The Simulator presents at about 45–48 Hz even with nothing happening (measured idle: 47 Hz), so every frame looks late against 120 Hz. Whether there are sustained drops at the cap is the device test in DEVICE_TESTING.md §2.
+- **GPU cost:** unknown until profiled on a device.
+
+**Not verified:** every M8 pass criterion needs a device:
+- no sustained dropped frames at the cap on target devices
+- idle throttling actually saving battery
+- the system-gesture conflict report
+
+DEVICE_TESTING.md is the step-by-step list.
+
+### R8 system-gesture conflict report (what the app does; results are pending an iPad)
+
+| Gesture | Conflict | What the app does | Risk |
+|---|---|---|---|
+| G22 three-finger tap and swipe | iPadOS undo/redo swipe, copy/paste pinch, editing menu | Canvas is first responder and opts out (`editingInteractionConfiguration = .none`) | Low to medium: the opt-out is Apple's supported route; untested on hardware |
+| G23 four/five-finger tap | Multitasking gestures | None possible (user setting) | Medium: a tap usually isn't a system gesture; swipes are |
+| G24 five-finger gather | **Five-finger pinch to Home** | None possible | **High** on iPad with Gestures on (the default). The system cancels the touches; the app then cancels G24, so no ink is lost. |
+| G24 five-finger spread | Five-finger spread (app switcher) | None possible | Medium |
+| G30 edge touch | Home indicator, Control Center, notifications, Slide Over, Stage Manager | Root view controller defers all screen edges | Medium: iPhone edges need a second swipe for the system; iPad Slide Over and Stage Manager may still win |
+| Everything on iPhone | Edge swipes only | Deferred | Low |
+
+### G24 decision (D5)
+
+The spec makes G24 the first gesture to cut if it collides with iPad system gestures.
+- **What's built:** gather (ink into an orb, one undo) and spread (nova, ink restored).
+- **Safety:** if the system takes the touches mid-gather, G24 is cancelled and no ink is lost.
+- **Recommendation:** keep it for now. It's harmless where it doesn't work. Decide after the iPad check in DEVICE_TESTING.md §5. If the five-finger pinch wins on iPad, either cut it on iPad only (a small change: there's no per-device switch yet) or cut it everywhere.
+
 ## Known issues and deviations
 
 - **Metal Toolchain not installed.** Shaders are compiled at launch from `ShaderSource.swift` (`makeLibrary(source:)`), which adds a few ms during warm-up and nothing on the touch path. To precompile instead, install the toolchain with `xcodebuild -downloadComponent MetalToolchain` (about 700 MB) and move the source back to a `.metal` file.
