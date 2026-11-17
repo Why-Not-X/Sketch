@@ -429,3 +429,12 @@ Built:
 Ran:
 - **Unit tests:** 168 pass. The new ones cover the fade starting at the touch and wrapping around a closed shape, spreading both ways on an open line, and taking only touched shapes, whole.
 - **Simulator:** drew a circle, then scribbled across its right side. Mid-fade, the ring had opened at the right and both ends were closing in on the far side. After that it was gone. Undo restored the full circle.
+
+
+## v2.3 Slower fades
+
+On request, both fades are slower:
+- **Plain line:** starts 0.5 s after lift (was 0.35 s) and takes 2.2 s to finish (was 1.4 s), about 2.7 s in total.
+- **Shape unravel:** 1.8 s (was 1.1 s).
+
+The settings are `StrokeFade.delay`, `StrokeFade.duration` and `ShapeUnravel.duration`. The 168 tests still pass.

@@ -3,9 +3,9 @@
 /// vertices, so the line itself never changes.
 public struct StrokeFade: Equatable, Sendable {
     /// Seconds after lift before the trail starts to eat the line.
-    public var delay: Double = 0.35
+    public var delay: Double = 0.5
     /// Seconds for the trail to travel the whole line.
-    public var duration: Double = 1.4
+    public var duration: Double = 2.2
     /// Width of the soft edge of the trail, as a fraction of the line's length.
     public var softness: Float = 0.25
 
@@ -57,7 +57,7 @@ extension Stroke {
 /// the two fronts meet on the far side). Pure math on already-tessellated vertices.
 public struct ShapeUnravel: Equatable, Sendable {
     /// Seconds for the fade to reach the farthest point of the shape.
-    public var duration: Double = 1.1
+    public var duration: Double = 1.8
     /// Width of the soft edge, as a fraction of the farthest distance.
     public var softness: Float = 0.2
     /// Distance along the outline (canvas units) where the eraser touched.

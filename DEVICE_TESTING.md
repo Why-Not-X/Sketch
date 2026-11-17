@@ -115,5 +115,5 @@ These are guesses tuned only on synthetic traces:
 
 1. Tap the wind button (it highlights). Draw ordinary lines: each should dissolve from where it started to where it ended, then vanish.
 2. Draw a circle, a spiral and a closed shape: they should stay.
-3. Does the timing feel right (about 0.35 s before it starts, 1.4 s to vanish)? Note whether it should linger longer.
+3. Does the timing feel right (about 0.5 s before it starts, 2.2 s to vanish; a shape unravels over 1.8 s)? Note whether it should linger longer.
 4. Draw a circle, then scribble over one side of it: the whole circle should unravel outward from where you scribbled, both ways around. Try a spiral and a filled shape too. Undo should bring the shape back whole.
