@@ -110,3 +110,9 @@ These are guesses tuned only on synthetic traces:
 3. Run `-stress-cap -theme neon-echoes` (Release, also add `-hud`) and compare the `STRESS RESULT` with `-stress-cap -theme base`. Echoes are the heaviest visual load.
 4. Quit and reopen: the last theme should still be active.
 5. Share in each theme: the PNG should match the screen's theme (ink and background only).
+
+## 8. Fade mode (v2.1)
+
+1. Tap the wind button (it highlights). Draw ordinary lines: each should dissolve from where it started to where it ended, then vanish.
+2. Draw a circle, a spiral and a closed shape: they should stay.
+3. Does the timing feel right (about 0.35 s before it starts, 1.4 s to vanish)? Note whether it should linger longer.

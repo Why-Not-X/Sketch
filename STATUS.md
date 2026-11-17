@@ -398,3 +398,21 @@ Known issues:
 - **Build after adding theme files:** Xcode's incremental build of the local package can miss new resource files, and that build then silently falls back to Base. Do a clean build (Product → Clean Build Folder) after adding a theme file. The clean device builds here include all five themes.
 - **Stroke echoes and undo:** echoes are effects, so undoing a stroke doesn't cancel echoes already in flight. They fade within about 1 s.
 - **Paper ribbons:** the ribbon fill reads as a grey-navy wash. It's acceptable, but could use a dedicated light-theme tint.
+
+
+## v2.1 Fade mode (D1's "a fade mode may come later")
+
+Built:
+- **Toggle:** a fade button (wind icon, second in the controls) turns fade mode on and off. It's highlighted when on and remembered across launches. Launch argument `-fade` turns it on for testing.
+- **With fade mode on:** a plain line, one that ends as an ordinary stroke, starts dissolving 0.35 s after release. The fade runs from the line's start toward its end with a soft edge, like a trail catching up, and is gone after another 1.4 s. Dwell blots on the line fade with it. The timings live in `StrokeFade`.
+- **What stays:** lines that make a shape stay as ink: circles (G10, snapped to a ring), spirals (G11) and closed shapes (G29, filled).
+- **Everything else** behaves as before: flicks, zigzags and swipes still consume their lines; scribbles still erase; ribbons (G17) and rake lines (G26) stay.
+- **Never in the drawing:** fading lines don't enter the document or the undo history, so Undo skips them, Share doesn't export them, and Clear removes any still fading. Theme echoes still ripple from them.
+
+Ran:
+- **Unit tests:** 165 pass (new: fade timing, start-first trail, gone at the end, distance-along mapping).
+- **Simulator** with simulated touch: a circle and a plain line with fade on. The circle snapped and stayed; the line dissolved start-first and was gone in under 2 s. Undo then removed the circle and didn't bring the line back. The fade toggle was still on after relaunch.
+
+Decisions (please check):
+- **Which lines count as shapes:** circles, spirals and closed shapes. Ribbons and rakes count as other gestures, so they stay too.
+- **Timing:** about 0.35 s before the fade starts and 1.4 s to finish. Easy to change if it should linger longer.

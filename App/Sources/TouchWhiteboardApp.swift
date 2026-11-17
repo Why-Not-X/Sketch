@@ -45,6 +45,13 @@ final class CanvasViewController: UIViewController {
         chromeModel.apply(controller.theme)
         canvas.applyTheme(controller.theme)
         chromeModel.onPickTheme = { id in controller.noteControlTouch(); controller.setTheme(id: id) }
+        // Fade mode: plain lines dissolve after release; shapes stay.
+        chromeModel.fadeOn = controller.fadeMode
+        chromeModel.onToggleFade = { [weak self] in
+            controller.noteControlTouch()
+            controller.setFadeMode(!controller.fadeMode)
+            self?.chromeModel.fadeOn = controller.fadeMode
+        }
         controller.onThemeChange = { [weak self] theme in
             self?.chromeModel.apply(theme)
             self?.canvas.applyTheme(theme)
@@ -71,7 +78,7 @@ final class CanvasViewController: UIViewController {
         super.viewDidLayoutSubviews()
         // Top-right corner, inside the safe area. The hosting view is only as big as the
         // buttons, so it can't take touches meant for the canvas.
-        let size = ChromeView.size(buttons: 4, swatches: chromeModel.swatches.count, open: chromeModel.showThemes)
+        let size = ChromeView.size(buttons: 5, swatches: chromeModel.swatches.count, open: chromeModel.showThemes)
         let inset = view.safeAreaInsets
         chrome.view.frame = CGRect(x: view.bounds.width - inset.right - size.width - 12,
                                    y: inset.top + 8, width: size.width, height: size.height)

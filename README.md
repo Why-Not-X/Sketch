@@ -12,6 +12,10 @@ A blank canvas where every touch gets an instant reaction. Native Swift, Metal a
 
 The debug HUD at the top left shows the measured frame rate, touch-to-screen latency and the last gestures recognized. In debug builds, shake the device to undo (the Undo button arrives with M7).
 
+## Fade mode
+
+The wind button turns fade mode on: plain lines dissolve from start to end after you lift, while circles, spirals and closed shapes stay as ink. It's remembered across launches; `-fade` turns it on for testing.
+
 ## Themes (v2)
 
 Tap the palette button for the theme row: Base, Neon, Neon Echoes, Chalk, Paper, Aurora. Themes are data: edit `Engine/Tools/make_themes.py`, run it, then **clean-build** (new resource files can be missed by incremental builds). Launch argument `-theme <id>` picks a theme for testing.

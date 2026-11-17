@@ -26,6 +26,8 @@ final class ChromeModel: ObservableObject {
     @Published var canUndo = false
     @Published var isEmpty = true
     @Published var showThemes = false
+    /// Fade mode: plain lines dissolve after release.
+    @Published var fadeOn = false
     @Published var themeID = Theme.base.id
     /// Icon and capsule colors follow the theme, so they stay visible on light canvases.
     @Published var iconColor = Color(red: 1.0, green: 0.95, blue: 0.86)
@@ -36,6 +38,7 @@ final class ChromeModel: ObservableObject {
     var onClear: () -> Void = {}
     var onShare: () -> Void = {}
     var onPickTheme: (String) -> Void = { _ in }
+    var onToggleFade: () -> Void = {}
     /// The controls changed size (the swatch row opened or closed).
     var onResize: () -> Void = {}
 
@@ -77,6 +80,8 @@ struct ChromeView: View {
                     model.showThemes.toggle()
                     model.onResize()
                 }
+                ChromeButton(symbol: "wind", label: model.fadeOn ? "Fade mode, on" : "Fade mode, off",
+                             color: model.iconColor, highlighted: model.fadeOn, action: model.onToggleFade)
                 ChromeButton(symbol: "arrow.uturn.backward", label: "Undo", color: model.iconColor, action: model.onUndo)
                     .disabled(!model.canUndo)
                 ChromeButton(symbol: "trash", label: "Clear", color: model.iconColor, action: model.onClear)
@@ -113,6 +118,8 @@ private struct ChromeButton: View {
     let symbol: String
     let label: String
     let color: Color
+    /// A toggle that is on (fade mode) gets a soft disc behind its icon.
+    var highlighted = false
     let action: () -> Void
     @Environment(\.isEnabled) private var enabled
 
@@ -120,8 +127,9 @@ private struct ChromeButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(color.opacity(enabled ? 0.8 : 0.25))
+                .foregroundStyle(color.opacity(enabled ? (highlighted ? 1 : 0.8) : 0.25))
                 .frame(width: ChromeView.button, height: ChromeView.button)
+                .background(Circle().fill(color.opacity(highlighted ? 0.18 : 0)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

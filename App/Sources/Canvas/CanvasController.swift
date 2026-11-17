@@ -77,6 +77,14 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     private var gathered: InkDocument?
     // G29: shapes whose fill is saved with the stroke at lift.
     private var fillShape = [Bool](repeating: false, count: 32)
+    // Fade mode: plain lines dissolve after release instead of staying as ink. Lines
+    // that made a shape (circle, spiral, closed shape) stay.
+    private(set) var fadeMode: Bool
+    private static let fadeKey = "fadeMode"
+    private let fade = StrokeFade()
+    private var madeShape = [Bool](repeating: false, count: 32)
+    private struct Fading { var stroke: Stroke; var released: Double; var length: Float }
+    private var fading: [Fading] = []
     private var fillAlpha: Float = 0.16
     // Stroke bounds for hit tests, rebuilt when the ink changes.
     private var inkIndex = InkIndex()
@@ -111,6 +119,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
             ?? UserDefaults.standard.string(forKey: Self.themeKey)
         let initial = requested.flatMap(ThemeLibrary.theme(id:)) ?? .base
         theme = initial
+        fadeMode = UserDefaults.standard.bool(forKey: Self.fadeKey) || args.contains("-fade")
         styleFrom = ThemeStyle(initial)
         styleTo = styleFrom
         haptics = HapticsPlayer(palette: set.hapticPalette)   // warmed at launch
@@ -245,7 +254,14 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     }
 
     /// Clear (D4): wipes all ink in one tap, as one undoable step.
+    /// Fade mode on or off (remembered). Lines already fading carry on.
+    func setFadeMode(_ on: Bool) {
+        fadeMode = on
+        UserDefaults.standard.set(on, forKey: Self.fadeKey)
+    }
+
     func clear() {
+        fading.removeAll()
         guard !history.document.isEmpty else { return }
         history.record { $0.removeAll() }
         gathered = nil
@@ -332,6 +348,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         liveVertices.removeAll(keepingCapacity: true)
         sprites.removeAll(keepingCapacity: true)
         if ribbonLive { tessellateRibbon(ribbonA, ribbonB, tint: Float(nextStrokeID), into: &liveVertices) }
+        drawFading()
         for stroke in rakeStrokes { tessellate(stroke, into: &liveVertices) }
         for i in 0..<builders.count {
             let tint = Float(builders[i].strokeID)
@@ -387,6 +404,8 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
             for k in pts.indices { erase(at: SIMD2(pts[k].x, pts[k].y), slot: i) }
         case (.g9, .ended), (.g9, .cancelled):
             if slot { scribbling[i] = false }
+        case (.g11, .fired) where slot:
+            madeShape[i] = true   // a spiral keeps its line in fade mode
         case (.g10, .fired) where slot:
             snapCircle[i] = SIMD3(g.x, g.y, g.size)
         case (.g8, .fired) where slot, (.g12, .fired) where slot:
@@ -511,6 +530,14 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
                 stroke = ring
             }
             if fillShape[i] { stroke.filled = true }
+            // Fade mode: a plain line (no shape, no other gesture) dissolves instead of
+            // becoming ink. It never enters the drawing, so Undo and Share skip it.
+            let isShape = snapCircle[i] != nil || fillShape[i] || madeShape[i]
+            if fadeMode && !isShape && !rakeMembers.contains(i) && !consumed[i] {
+                fading.append(Fading(stroke: stroke, released: frameNow, length: stroke.length))
+                echo(stroke)
+                return
+            }
             if rakeMembers.contains(i) {
                 finishRakeMember(i, stroke)
             } else if consumed[i] {
@@ -525,6 +552,27 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
             }
         case .cancelled:
             b.cancel()
+        }
+    }
+
+    /// Fade mode: draws each released line with its trail, and drops finished ones.
+    private func drawFading() {
+        guard !fading.isEmpty else { return }
+        fading.removeAll { fade.isFinished(age: frameNow - $0.released) }
+        for f in fading {
+            let p = fade.progress(age: frameNow - f.released)
+            let start = liveVertices.count
+            StrokeTessellator.append(f.stroke.points, taperStart: true, taperEnd: true,
+                                     taperLength: brush.taperLength / space.unit,
+                                     taperMinFactor: brush.taperMinFactor,
+                                     glowFactor: brush.glowWidthFactor, tint: Float(f.stroke.id), into: &liveVertices)
+            fade.apply(to: &liveVertices, range: start..<liveVertices.count, length: f.length, progress: p)
+            // Dwell blots fade with the line as a whole.
+            let blotAlpha = 1 - p
+            for b in f.stroke.blots {
+                BlotTessellator.append(b, coreFrac: Self.blotCoreFrac, alpha: blotAlpha, tint: Float(f.stroke.id),
+                                       into: &liveVertices)
+            }
         }
     }
 
@@ -592,6 +640,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         scribbleCheckpointed[i] = false
         consumed[i] = false
         fillShape[i] = false
+        madeShape[i] = false
         snapCircle[i] = nil
         blots[i].removeAll(keepingCapacity: true)
         liveBlot[i] = nil
