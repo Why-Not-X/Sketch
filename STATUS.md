@@ -416,3 +416,16 @@ Ran:
 Decisions (please check):
 - **Which lines count as shapes:** circles, spirals and closed shapes. Ribbons and rakes count as other gestures, so they stay too.
 - **Timing:** about 0.35 s before the fade starts and 1.4 s to finish. Easy to change if it should linger longer.
+
+
+## v2.2 Shapes unravel when erased (fade mode)
+
+Built:
+- **Shapes remember they're shapes:** every circle (G10), spiral (G11) and closed shape (G29) is marked as a shape when it's drawn, with fade mode on or off.
+- **Erasing a shape in fade mode:** a scribble (G9) that touches any part of a shape (its outline, or anywhere inside a filled shape) removes the whole shape from the drawing. The shape doesn't break into pieces; it unravels instead. The fade starts at the point the eraser touched and spreads both ways along the outline. On a closed shape the two fronts meet on the far side; on a spiral they run out to both ends. It takes 1.1 s. A filled shape's fill fades slightly ahead of the outline, and any blots fade with it. The math lives in `ShapeUnravel` (`StrokeFade.swift`).
+- **Undo:** the unravel is part of the scribble's undo step. Undo brings the shape back whole and stops any unravel still playing.
+- **Other ink:** with fade mode off, erasing works as before (shapes break into pieces). Plain ink a scribble touches is erased normally.
+
+Ran:
+- **Unit tests:** 168 pass. The new ones cover the fade starting at the touch and wrapping around a closed shape, spreading both ways on an open line, and taking only touched shapes, whole.
+- **Simulator:** drew a circle, then scribbled across its right side. Mid-fade, the ring had opened at the right and both ends were closing in on the far side. After that it was gone. Undo restored the full circle.

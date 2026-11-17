@@ -14,7 +14,7 @@ The debug HUD at the top left shows the measured frame rate, touch-to-screen lat
 
 ## Fade mode
 
-The wind button turns fade mode on: plain lines dissolve from start to end after you lift, while circles, spirals and closed shapes stay as ink. It's remembered across launches; `-fade` turns it on for testing.
+The wind button turns fade mode on: plain lines dissolve from start to end after you lift, while circles, spirals and closed shapes stay as ink. It's remembered across launches; `-fade` turns it on for testing. Erasing any part of a shape in fade mode unravels the whole shape, outward from where the eraser touched (Undo brings it back).
 
 ## Themes (v2)
 

@@ -40,11 +40,14 @@ public struct Stroke: Codable, Equatable, Sendable {
     public var partner: [InkPoint]?
     /// G29: the stroke closes a shape whose inside is filled.
     public var filled: Bool
+    /// The stroke made a shape (circle, spiral or closed shape). In fade mode, erasing
+    /// any part of a shape unravels the whole of it.
+    public var isShape: Bool
 
     public init(id: UInt32, points: [InkPoint], isPencil: Bool, blots: [InkBlot] = [],
-                partner: [InkPoint]? = nil, filled: Bool = false) {
+                partner: [InkPoint]? = nil, filled: Bool = false, isShape: Bool = false) {
         self.id = id; self.points = points; self.isPencil = isPencil; self.blots = blots
-        self.partner = partner; self.filled = filled
+        self.partner = partner; self.filled = filled; self.isShape = isShape
     }
 
     public var isRibbon: Bool { partner != nil }
@@ -257,4 +260,24 @@ public struct InkBrush: Codable, Equatable, Sendable {
 
     public init() {}
     public static let `default` = InkBrush()
+}
+
+extension InkDocument {
+    /// Fade mode: removes every shape the eraser at (x, y) touches (its outline or, for
+    /// a filled shape, its inside) and returns them whole, so they can unravel.
+    public mutating func removeShapes(touchedAtX x: Float, y: Float, radius: Float) -> [Stroke] {
+        var hit: [Stroke] = []
+        strokes.removeAll { stroke in
+            guard stroke.isShape, stroke.partner == nil, stroke.points.count >= 2,
+                  stroke.intersects(x: x, y: y, radius: radius) else { return false }
+            var touched = stroke.points.contains { p in
+                let reach = radius + p.width * 0.5
+                return (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) <= reach * reach
+            }
+            if !touched && stroke.filled { touched = stroke.contains(x: x, y: y) }
+            if touched { hit.append(stroke) }
+            return touched
+        }
+        return hit
+    }
 }

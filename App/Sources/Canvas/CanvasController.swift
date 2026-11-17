@@ -83,7 +83,14 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     private static let fadeKey = "fadeMode"
     private let fade = StrokeFade()
     private var madeShape = [Bool](repeating: false, count: 32)
-    private struct Fading { var stroke: Stroke; var released: Double; var length: Float }
+    private struct Fading {
+        var stroke: Stroke; var released: Double; var length: Float
+        /// Set when an eraser touched a shape: the fade spreads out from the touch.
+        var unravel: ShapeUnravel? = nil
+        func isFinished(_ fade: StrokeFade, now: Double) -> Bool {
+            unravel?.isFinished(age: now - released) ?? fade.isFinished(age: now - released)
+        }
+    }
     private var fading: [Fading] = []
     private var fillAlpha: Float = 0.16
     // Stroke bounds for hit tests, rebuilt when the ink changes.
@@ -294,6 +301,9 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     func undo() {
         guard history.undo() else { return }
         inkDirty = true
+        // An undone erase brings its shapes back, so their unravel stops.
+        let ids = Set(history.document.strokes.map(\.id))
+        fading.removeAll { $0.unravel != nil && ids.contains($0.stroke.id) }
         if gathered != nil && !history.document.isEmpty {
             // The gather was undone: the ink is back, so the orb goes.
             gathered = nil
@@ -530,9 +540,11 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
                 stroke = ring
             }
             if fillShape[i] { stroke.filled = true }
+            // Shapes remember they're shapes, so erasing one in fade mode unravels it.
+            let isShape = snapCircle[i] != nil || fillShape[i] || madeShape[i]
+            stroke.isShape = isShape
             // Fade mode: a plain line (no shape, no other gesture) dissolves instead of
             // becoming ink. It never enters the drawing, so Undo and Share skip it.
-            let isShape = snapCircle[i] != nil || fillShape[i] || madeShape[i]
             if fadeMode && !isShape && !rakeMembers.contains(i) && !consumed[i] {
                 fading.append(Fading(stroke: stroke, released: frameNow, length: stroke.length))
                 echo(stroke)
@@ -558,15 +570,26 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     /// Fade mode: draws each released line with its trail, and drops finished ones.
     private func drawFading() {
         guard !fading.isEmpty else { return }
-        fading.removeAll { fade.isFinished(age: frameNow - $0.released) }
+        fading.removeAll { $0.isFinished(fade, now: frameNow) }
         for f in fading {
-            let p = fade.progress(age: frameNow - f.released)
+            let age = frameNow - f.released
+            let p = f.unravel?.progress(age: age) ?? fade.progress(age: age)
+            let tint = Float(f.stroke.id)
+            if f.stroke.filled {
+                // The fill fades as the outline unravels, a little ahead of it.
+                let a = fillAlpha * max(0, 1 - p * 1.4)
+                if a > 0 { FillTessellator.append(f.stroke.points, alpha: a, tint: tint, into: &liveVertices) }
+            }
             let start = liveVertices.count
             StrokeTessellator.append(f.stroke.points, taperStart: true, taperEnd: true,
                                      taperLength: brush.taperLength / space.unit,
                                      taperMinFactor: brush.taperMinFactor,
                                      glowFactor: brush.glowWidthFactor, tint: Float(f.stroke.id), into: &liveVertices)
-            fade.apply(to: &liveVertices, range: start..<liveVertices.count, length: f.length, progress: p)
+            if let u = f.unravel {
+                u.apply(to: &liveVertices, range: start..<liveVertices.count, progress: p)
+            } else {
+                fade.apply(to: &liveVertices, range: start..<liveVertices.count, length: f.length, progress: p)
+            }
             // Dwell blots fade with the line as a whole.
             let blotAlpha = 1 - p
             for b in f.stroke.blots {
@@ -649,9 +672,19 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
 
     /// G9: erases ink under the scribble. The first erase of a scribble saves an undo
     /// point, so the whole scribble undoes in one step.
+    /// In fade mode, a shape the eraser touches leaves the drawing whole and unravels
+    /// outward from the touch (part of the same undo step).
     private func erase(at p: SIMD2<Float>, slot i: Int) {
         var trial = history.document
-        guard trial.erase(x: p.x, y: p.y, radius: eraseRadius / space.unit, erased: &erased) else { return }
+        let radius = eraseRadius / space.unit
+        let shapes = fadeMode ? trial.removeShapes(touchedAtX: p.x, y: p.y, radius: radius) : []
+        let erasedInk = trial.erase(x: p.x, y: p.y, radius: radius, erased: &erased)
+        guard erasedInk || !shapes.isEmpty else { return }
+        for shape in shapes {
+            fading.append(Fading(stroke: shape, released: frameNow, length: shape.length,
+                                 unravel: ShapeUnravel(stroke: shape, x: p.x, y: p.y)))
+            erased.append(p)
+        }
         if !scribbleCheckpointed[i] {
             history.checkpoint()
             scribbleCheckpointed[i] = true
