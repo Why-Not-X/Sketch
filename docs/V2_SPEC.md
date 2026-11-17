@@ -1,6 +1,6 @@
 # Touch Whiteboard v2: Themes
 
-Status: **draft, waiting for approval** · builds on the `v1.0` tag
+Status: **approved and built** (tag `v2.0`) · builds on the `v1.0` tag · results in STATUS.md
 
 ## Goal
 

@@ -98,3 +98,15 @@ These are guesses tuned only on synthetic traces:
 - **Touch a stroke (G27):** tapping on a line plucks it; tapping beside it doesn't.
 - **Two fingers (G17–G21):** drag, pinch, rotate and orbit are each told apart reliably.
 - **Swipe versus rake:** a three-finger swipe isn't mistaken for a rake, and the reverse.
+
+## 7. Themes (v2)
+
+1. Open the palette button and try every theme. Switching should cross-fade smoothly with no flash or stutter, and existing ink should recolor.
+2. On a real screen, check:
+   - **Neon:** blacks stay black, with no grey haze.
+   - **Paper:** readable in daylight; the buttons are visible.
+   - **Chalk:** the grain looks like chalk, not noise.
+   - **Aurora:** the color flow along strokes is smooth.
+3. Run `-stress-cap -theme neon-echoes` (Release, also add `-hud`) and compare the `STRESS RESULT` with `-stress-cap -theme base`. Echoes are the heaviest visual load.
+4. Quit and reopen: the last theme should still be active.
+5. Share in each theme: the PNG should match the screen's theme (ink and background only).

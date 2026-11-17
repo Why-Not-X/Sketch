@@ -12,6 +12,10 @@ A blank canvas where every touch gets an instant reaction. Native Swift, Metal a
 
 The debug HUD at the top left shows the measured frame rate, touch-to-screen latency and the last gestures recognized. In debug builds, shake the device to undo (the Undo button arrives with M7).
 
+## Themes (v2)
+
+Tap the palette button for the theme row: Base, Neon, Neon Echoes, Chalk, Paper, Aurora. Themes are data: edit `Engine/Tools/make_themes.py`, run it, then **clean-build** (new resource files can be missed by incremental builds). Launch argument `-theme <id>` picks a theme for testing.
+
 ## Scripted demos (Simulator)
 
 Add a launch argument under Product → Scheme → Edit Scheme… → Run → Arguments:
