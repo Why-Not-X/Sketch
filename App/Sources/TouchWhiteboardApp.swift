@@ -40,9 +40,29 @@ final class CanvasViewController: UIViewController {
             chromeModel?.isEmpty = isEmpty
         }
 
+        // v2 themes: the picker lists every theme; picking one cross-fades the canvas.
+        chromeModel.swatches = controller.themes.map(ThemeSwatch.init)
+        chromeModel.apply(controller.theme)
+        canvas.applyTheme(controller.theme)
+        chromeModel.onPickTheme = { id in controller.noteControlTouch(); controller.setTheme(id: id) }
+        controller.onThemeChange = { [weak self] theme in
+            self?.chromeModel.apply(theme)
+            self?.canvas.applyTheme(theme)
+        }
+        chromeModel.onResize = { [weak self] in
+            controller.noteControlTouch()
+            self?.view.setNeedsLayout()
+        }
+        // Touching the canvas closes the theme row.
+        canvas.onTouchBegan = { [weak self] in
+            guard let self, self.chromeModel.showThemes else { return }
+            self.chromeModel.showThemes = false
+            self.view.setNeedsLayout()
+        }
+
         addChild(chrome)
         chrome.view.backgroundColor = .clear
-        chrome.sizingOptions = .intrinsicContentSize
+        chrome.safeAreaRegions = []   // the frame is already placed inside the safe area
         view.addSubview(chrome.view)
         chrome.didMove(toParent: self)
     }
@@ -51,7 +71,7 @@ final class CanvasViewController: UIViewController {
         super.viewDidLayoutSubviews()
         // Top-right corner, inside the safe area. The hosting view is only as big as the
         // buttons, so it can't take touches meant for the canvas.
-        let size = chrome.view.intrinsicContentSize
+        let size = ChromeView.size(buttons: 4, swatches: chromeModel.swatches.count, open: chromeModel.showThemes)
         let inset = view.safeAreaInsets
         chrome.view.frame = CGRect(x: view.bounds.width - inset.right - size.width - 12,
                                    y: inset.top + 8, width: size.width, height: size.height)

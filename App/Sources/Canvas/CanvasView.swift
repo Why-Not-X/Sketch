@@ -1,4 +1,5 @@
 import UIKit
+import ResponseMapping
 import GestureEngine
 
 /// Full-screen Metal-backed canvas. Captures raw touches with the four `touches*`
@@ -65,21 +66,45 @@ final class CanvasView: UIView {
 
     // MARK: Touches. Kept minimal: queue events, start the latency clock, return.
 
+    /// Called on every canvas touch-down (the controls close the theme row).
+    var onTouchBegan: (() -> Void)?
+
+    /// Keeps the debug HUD readable on light themes.
+    func applyTheme(_ theme: Theme) {
+        hud.textColor = theme.backgroundLuminance > 0.5 ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 1, alpha: 0.55)
+    }
+
+    // Only touches that began on the canvas itself. Touches on the controls (a subview)
+    // that the controls don't consume travel up the responder chain to here; without
+    // this filter every button tap also drew a tap ripple on the canvas.
+    private func own(_ touches: Set<UITouch>) -> Set<UITouch> {
+        touches.allSatisfy({ $0.view === self }) ? touches : touches.filter { $0.view === self }
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let mine = own(touches)
+        guard !mine.isEmpty else { return }
         controller.wake()
-        for t in touches { controller.latency.touchDown(at: t.timestamp) }
-        controller.input.handle(touches, event: event, phase: .began, in: self)
+        onTouchBegan?()
+        for t in mine { controller.latency.touchDown(at: t.timestamp) }
+        controller.input.handle(mine, event: event, phase: .began, in: self)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        controller.input.handle(touches, event: event, phase: .moved, in: self)
+        let mine = own(touches)
+        guard !mine.isEmpty else { return }
+        controller.input.handle(mine, event: event, phase: .moved, in: self)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        controller.input.handle(touches, event: event, phase: .ended, in: self)
+        let mine = own(touches)
+        guard !mine.isEmpty else { return }
+        controller.input.handle(mine, event: event, phase: .ended, in: self)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        controller.input.handle(touches, event: event, phase: .cancelled, in: self)
+        let mine = own(touches)
+        guard !mine.isEmpty else { return }
+        controller.input.handle(mine, event: event, phase: .cancelled, in: self)
     }
 }
