@@ -521,10 +521,18 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
             } else {
                 history.record { $0.append(stroke) }
                 tessellate(stroke, into: &finishedVertices)
+                echo(stroke)
             }
         case .cancelled:
             b.cancel()
         }
+    }
+
+    /// Theme echoes: a committed stroke ripples faint copies of itself outward.
+    private func echo(_ stroke: Stroke) {
+        guard theme.echo != nil, stroke.points.count >= 2 else { return }
+        effects?.spawnStrokeEcho(path: stroke.points.map { space.toPoints(SIMD2($0.x, $0.y)) },
+                                 strokeID: stroke.id, now: frameNow)
     }
 
     /// G26: collects each rake line; when the last finger lifts, all lines are
@@ -540,7 +548,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
             history.pushUndoState(withLines)
         } else {
             history.record { doc in for st in rakeStrokes { doc.append(st) } }
-            for st in rakeStrokes { tessellate(st, into: &finishedVertices) }
+            for st in rakeStrokes { tessellate(st, into: &finishedVertices); echo(st) }
         }
         rakeStrokes.removeAll()
     }

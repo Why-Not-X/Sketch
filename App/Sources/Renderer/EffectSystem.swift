@@ -8,7 +8,8 @@ struct EffectInstance {
     var radius: Float
     var thickness: Float
     var alpha: Float
-    /// 0 ring, 1 soft disc, 2 bright dot, 3 glowing line from (x, y) to (x2, y2).
+    /// 0 ring, 1 soft disc, 2 bright dot, 3 glowing line from (x, y) to (x2, y2),
+    /// 4 the same without end caps (one segment of a polyline).
     var shape: Float
     var r: Float
     var g: Float
@@ -142,6 +143,7 @@ final class EffectSystem {
             default: break
             }
             effects.append(live)
+            spawnEchoes(of: s, now: now)
         case .update(let key, let x, let y, let radius, let intensity):
             for i in effects.indices where effects[i].s.key == key {
                 effects[i].s.x = x; effects[i].s.y = y
@@ -323,6 +325,8 @@ final class EffectSystem {
                     distortions.append(Distortion(x: s.x - dx * diag, y: s.y - dy * diag, radius: 0, strength: a,
                                                   kind: 3, phase: 2 * diag * p, dirX: dx, dirY: dy))
                 }
+            case .strokeEcho:
+                drawStrokeEcho(e, age: Float(age), into: &out)
             case .burst, .launch, .vortex, .orbitSwarm, .crossSparks, .dissolve, .blot, .ribbon, .fill:
                 break   // particles only, a style holder, or ink handled by the canvas
             }
@@ -390,7 +394,7 @@ final class EffectSystem {
                 q += SIMD2(-d.y / len * j, d.x / len * j)
             }
             out.append(EffectInstance(x: prev.x, y: prev.y, radius: 0, thickness: s.thickness, alpha: flicker,
-                                      shape: 3, r: c.r, g: c.g, b: c.b, x2: q.x, y2: q.y))
+                                      shape: 4, r: c.r, g: c.g, b: c.b, x2: q.x, y2: q.y))
             if Int.random(in: 0..<7) == 0 {   // small branching spark
                 let ang = Float.random(in: 0..<(2 * .pi)), l = Float.random(in: 8...18)
                 out.append(EffectInstance(x: q.x, y: q.y, radius: 0, thickness: s.thickness * 0.6, alpha: flicker * 0.7,
@@ -487,7 +491,7 @@ final class EffectSystem {
         for k in 1..<path.count {
             let q = displaced(k)
             out.append(EffectInstance(x: prev.x, y: prev.y, radius: 0, thickness: s.thickness, alpha: alpha * 0.6,
-                                      shape: 3, r: c.r, g: c.g, b: c.b, x2: q.x, y2: q.y))
+                                      shape: 4, r: c.r, g: c.g, b: c.b, x2: q.x, y2: q.y))
             prev = q
         }
         // Glows travelling both ways from the touch point.
@@ -516,6 +520,73 @@ final class EffectSystem {
             emit(Particle(ox: s.x, oy: s.y, vx: cos(base) * v, vy: sin(base) * v, t0: gpuTime(now),
                           life: life * Float.random(in: 0.7...1), size: Float.random(in: 2...3.5), drag: drag,
                           alpha: s.intensity, r: c.r, g: c.g, b: c.b))
+        }
+    }
+
+    // MARK: Echoes (v2 themes)
+
+    /// Themes with echoes repeat every ring, halo, shockwave and flash: each copy starts
+    /// a little later, larger and fainter. Echoes count against the effect cap and are
+    /// the first thing dropped near it.
+    private func spawnEchoes(of s: EffectSpawn, now: Double) {
+        guard let echo = theme.echo, echo.count > 0, s.key == 0 else { return }
+        switch s.kind {
+        case .ring, .halo, .shockwave, .flash: break
+        default: return
+        }
+        for k in 1...echo.count {
+            guard effects.count < Self.maxEffects - 16 else { return }   // leave room for real effects
+            var c = s
+            let grow = 1 + echo.growth * Float(k)
+            c.radius *= grow
+            c.startRadius *= grow
+            c.delay += echo.delay * Double(k)
+            c.intensity *= Float(pow(Double(echo.fade), Double(k)))
+            c.duration = c.duration.map { $0 * (1 + 0.15 * Double(k)) }
+            var live = Live(s: c, born: now, releasedAt: nil, lastEmit: now, px: c.x, py: c.y)
+            live.variant = spawnVariant + k
+            effects.append(live)
+        }
+    }
+
+    /// A finished stroke sends faint copies of itself outward on both sides (theme echo).
+    func spawnStrokeEcho(path: [SIMD2<Float>], strokeID: UInt32, now: Double) {
+        guard let echo = theme.echo, echo.strokeCopies > 0, path.count >= 2,
+              effects.count < Self.maxEffects - 16 else { return }
+        let s = EffectSpawn(kind: .strokeEcho, x: path[0].x, y: path[0].y, radius: echo.strokeTravel,
+                            duration: echo.strokeDuration, thickness: 1.6, intensity: 0.7, count: echo.strokeCopies)
+        var live = Live(s: s, born: now, releasedAt: nil, lastEmit: now, px: s.x, py: s.y)
+        live.path = downsample(path, to: 48)
+        live.variant = Int(strokeID)
+        effects.append(live)
+    }
+
+    private func drawStrokeEcho(_ e: Live, age: Float, into out: inout [EffectInstance]) {
+        let path = e.path
+        guard path.count >= 2 else { return }
+        let life = Float(e.s.duration ?? 1)
+        // The stroke's own color: its palette entry in per-stroke themes.
+        let n = theme.palette.count
+        let c = theme.inkMode == .perStroke ? theme.palette[e.variant % n] : theme.ink
+        for copy in 1...max(1, e.s.count) {
+            let p = (age - Float(copy - 1) * 0.15 * life) / life
+            guard p > 0, p < 1 else { continue }
+            let offset = e.s.radius * Float(copy) * Easing.easeOut.apply(p)
+            let alpha = e.s.intensity * pow(1 - p, 1.5) / Float(copy)
+            for side: Float in [-1, 1] {
+                var prev: SIMD2<Float>? = nil
+                for k in 0..<path.count {
+                    let a = path[max(0, k - 1)], b = path[min(path.count - 1, k + 1)]
+                    let d = b - a
+                    let len = max(1e-3, (d.x * d.x + d.y * d.y).squareRoot())
+                    let q = path[k] + SIMD2(-d.y / len, d.x / len) * offset * side
+                    if let pr = prev {
+                        out.append(EffectInstance(x: pr.x, y: pr.y, radius: 0, thickness: e.s.thickness, alpha: alpha,
+                                                  shape: 4, r: c.r, g: c.g, b: c.b, x2: q.x, y2: q.y))
+                    }
+                    prev = q
+                }
+            }
         }
     }
 

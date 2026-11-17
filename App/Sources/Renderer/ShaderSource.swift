@@ -252,7 +252,7 @@ enum ShaderSource {
         float radius;
         float thickness;
         float alpha;
-        float shape;          // 0 ring, 1 soft disc, 2 bright dot, 3 glowing line (center → p2)
+        float shape;          // 0 ring, 1 soft disc, 2 bright dot, 3 glowing line (center → p2), 4 polyline segment
         packed_float3 color;
         packed_float2 p2;
     };
@@ -282,7 +282,10 @@ enum ShaderSource {
             float2 dir = len > 1e-3 ? (b - a) / len : float2(1, 0);
             float2 nrm = float2(-dir.y, dir.x);
             float ext = max(e.thickness, 0.5) * 3.0;
-            float lx = c.x < 0.0 ? -ext : len + ext;
+            // Shape 4 is a polyline segment: no end caps, so neighbours don't overlap
+            // and brighten at every joint.
+            float capExt = e.shape > 3.5 ? 0.0 : ext;
+            float lx = c.x < 0.0 ? -capExt : len + capExt;
             float ly = c.y * ext;
             o.local = float2(lx, ly);
             o.position = ptToClip(a + dir * lx + nrm * ly, U);

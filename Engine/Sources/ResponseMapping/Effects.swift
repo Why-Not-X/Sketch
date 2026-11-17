@@ -61,6 +61,9 @@ public enum EffectKind: String, Codable, CaseIterable, Sendable {
     /// A straight wavefront crossing the canvas in the gesture's direction, nudging ink.
     /// With a radius, it starts at the point and travels only that far (G30).
     case wave
+    /// v2 themes with echoes: faint copies of a finished stroke ripple outward on both
+    /// sides and fade. Spawned by the canvas from the theme, not by response recipes.
+    case strokeEcho
     /// G27: the touched stroke vibrates like a plucked string while glows run both ways
     /// from the touch point. The canvas supplies the stroke's path.
     case pluck
@@ -225,6 +228,21 @@ public struct EffectSpawn: Equatable, Sendable {
     public var points: [Float]
     /// Draw one copy at every point in `points`.
     public var atEachPoint: Bool
+
+    /// For effects the canvas spawns itself (theme echoes); recipes go through the mapper.
+    public init(key: UInt64 = 0, kind: EffectKind, x: Float, y: Float, radius: Float, startRadius: Float = 0,
+                duration: Double?, delay: Double = 0, thickness: Float = 2, intensity: Float = 1, count: Int = 0,
+                color: ColorRole = .glow, easing: Easing = .easeOut, persistence: Persistence = .short,
+                tempo: Float = 0, directionX: Float = 0, directionY: Float = 0, speed: Float = 0,
+                magnitude: Float = 0, size: Float = 0, originX: Float = 0, originY: Float = 0,
+                points: [Float] = [], atEachPoint: Bool = false) {
+        self.key = key; self.kind = kind; self.x = x; self.y = y; self.radius = radius; self.startRadius = startRadius
+        self.duration = duration; self.delay = delay; self.thickness = thickness; self.intensity = intensity
+        self.count = count; self.color = color; self.easing = easing; self.persistence = persistence
+        self.tempo = tempo; self.directionX = directionX; self.directionY = directionY; self.speed = speed
+        self.magnitude = magnitude; self.size = size; self.originX = originX; self.originY = originY
+        self.points = points; self.atEachPoint = atEachPoint
+    }
 }
 
 public enum EffectCommand: Equatable, Sendable {
