@@ -106,13 +106,14 @@ extension InkDocument {
 /// `maxPoints` and triangulated by ear clipping; a self-intersecting outline falls
 /// back to a fan from its centroid.
 public enum FillTessellator {
-    public static func append(_ outline: [InkPoint], alpha: Float, maxPoints: Int = 96, into out: inout [InkVertex]) {
+    public static func append(_ outline: [InkPoint], alpha: Float, maxPoints: Int = 96, tint: Float = 0,
+                              into out: inout [InkVertex]) {
         guard outline.count >= 3 else { return }
         let step = max(1, outline.count / maxPoints)
         var poly: [SIMD2<Float>] = stride(from: 0, to: outline.count, by: step).map { SIMD2(outline[$0].x, outline[$0].y) }
         if poly.count >= 2, hypot(poly[0].x - poly[poly.count - 1].x, poly[0].y - poly[poly.count - 1].y) < 1e-6 { poly.removeLast() }
         guard poly.count >= 3 else { return }
-        func v(_ p: SIMD2<Float>) -> InkVertex { InkVertex(x: p.x, y: p.y, u: 0, coreFrac: 1, alpha: alpha, along: 0, halfWidth: 1) }
+        func v(_ p: SIMD2<Float>) -> InkVertex { InkVertex(x: p.x, y: p.y, u: 0, coreFrac: 1, alpha: alpha, along: 0, halfWidth: 1, tint: tint) }
         if let tris = earClip(poly) {
             for t in tris { out.append(v(poly[t.0])); out.append(v(poly[t.1])); out.append(v(poly[t.2])) }
         } else {

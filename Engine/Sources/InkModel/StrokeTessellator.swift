@@ -1,6 +1,6 @@
 import Foundation
 
-/// One ink vertex, laid out to match `InkVertex` in ShaderSource.swift (7 x Float, 28 bytes).
+/// One ink vertex, laid out to match `InkVertex` in ShaderSource.swift (8 x Float, 32 bytes).
 public struct InkVertex: Equatable, Sendable {
     public var x: Float
     public var y: Float
@@ -15,10 +15,14 @@ public struct InkVertex: Equatable, Sendable {
     /// u·halfWidth and halfWidth separately and divides, which keeps the core edge
     /// straight across tapered quads instead of zigzagging at the triangle diagonal.
     public var halfWidth: Float
+    /// The stroke's ID, so the shader can give each stroke its palette color (v2
+    /// themes). Kept as data, not a color, so switching themes recolors without a rebuild.
+    public var tint: Float
 
-    public init(x: Float, y: Float, u: Float, coreFrac: Float, alpha: Float, along: Float, halfWidth: Float = 1) {
+    public init(x: Float, y: Float, u: Float, coreFrac: Float, alpha: Float, along: Float, halfWidth: Float = 1,
+                tint: Float = 0) {
         self.x = x; self.y = y; self.u = u; self.coreFrac = coreFrac; self.alpha = alpha; self.along = along
-        self.halfWidth = halfWidth
+        self.halfWidth = halfWidth; self.tint = tint
     }
 }
 
@@ -30,7 +34,7 @@ public enum StrokeTessellator {
     ///   - taperEnd: false while the stroke is live, so the head stays full width.
     public static func append(_ points: [InkPoint], taperStart: Bool, taperEnd: Bool,
                               taperLength: Float, taperMinFactor: Float,
-                              glowFactor: Float, alpha: Float = 1,
+                              glowFactor: Float, alpha: Float = 1, tint: Float = 0,
                               into out: inout [InkVertex]) {
         let n = points.count
         guard n >= 2 else { return }
@@ -62,12 +66,12 @@ public enum StrokeTessellator {
             let r = p - SIMD2(nx, ny) * h
 
             if i > 0 {
-                out.append(InkVertex(x: prevL.x, y: prevL.y, u: 1, coreFrac: coreFrac, alpha: alpha, along: prevS, halfWidth: prevH))
-                out.append(InkVertex(x: prevR.x, y: prevR.y, u: -1, coreFrac: coreFrac, alpha: alpha, along: prevS, halfWidth: prevH))
-                out.append(InkVertex(x: l.x, y: l.y, u: 1, coreFrac: coreFrac, alpha: alpha, along: s, halfWidth: h))
-                out.append(InkVertex(x: prevR.x, y: prevR.y, u: -1, coreFrac: coreFrac, alpha: alpha, along: prevS, halfWidth: prevH))
-                out.append(InkVertex(x: r.x, y: r.y, u: -1, coreFrac: coreFrac, alpha: alpha, along: s, halfWidth: h))
-                out.append(InkVertex(x: l.x, y: l.y, u: 1, coreFrac: coreFrac, alpha: alpha, along: s, halfWidth: h))
+                out.append(InkVertex(x: prevL.x, y: prevL.y, u: 1, coreFrac: coreFrac, alpha: alpha, along: prevS, halfWidth: prevH, tint: tint))
+                out.append(InkVertex(x: prevR.x, y: prevR.y, u: -1, coreFrac: coreFrac, alpha: alpha, along: prevS, halfWidth: prevH, tint: tint))
+                out.append(InkVertex(x: l.x, y: l.y, u: 1, coreFrac: coreFrac, alpha: alpha, along: s, halfWidth: h, tint: tint))
+                out.append(InkVertex(x: prevR.x, y: prevR.y, u: -1, coreFrac: coreFrac, alpha: alpha, along: prevS, halfWidth: prevH, tint: tint))
+                out.append(InkVertex(x: r.x, y: r.y, u: -1, coreFrac: coreFrac, alpha: alpha, along: s, halfWidth: h, tint: tint))
+                out.append(InkVertex(x: l.x, y: l.y, u: 1, coreFrac: coreFrac, alpha: alpha, along: s, halfWidth: h, tint: tint))
             }
             prevL = l; prevR = r; prevS = s; prevH = h
         }
@@ -90,16 +94,16 @@ public enum StrokeTessellator {
 /// G15 blots: a filled disc drawn with the ink shader. A fan from the center (u = 0)
 /// to the rim (u = 1), so the shader's core edge and glow give a soft, feathered rim.
 public enum BlotTessellator {
-    public static func append(_ b: InkBlot, coreFrac: Float, alpha: Float = 1, segments: Int = 40,
+    public static func append(_ b: InkBlot, coreFrac: Float, alpha: Float = 1, segments: Int = 40, tint: Float = 0,
                               into out: inout [InkVertex]) {
         guard b.radius > 0 else { return }
         let outer = b.radius / max(0.05, coreFrac)
         for k in 0..<segments {
             let a0 = Float(k) / Float(segments) * 2 * .pi
             let a1 = Float(k + 1) / Float(segments) * 2 * .pi
-            out.append(InkVertex(x: b.x, y: b.y, u: 0, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1))
-            out.append(InkVertex(x: b.x + outer * cos(a0), y: b.y + outer * sin(a0), u: 1, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1))
-            out.append(InkVertex(x: b.x + outer * cos(a1), y: b.y + outer * sin(a1), u: 1, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1))
+            out.append(InkVertex(x: b.x, y: b.y, u: 0, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1, tint: tint))
+            out.append(InkVertex(x: b.x + outer * cos(a0), y: b.y + outer * sin(a0), u: 1, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1, tint: tint))
+            out.append(InkVertex(x: b.x + outer * cos(a1), y: b.y + outer * sin(a1), u: 1, coreFrac: coreFrac, alpha: alpha, along: 0, halfWidth: 1, tint: tint))
         }
     }
 }
@@ -107,11 +111,12 @@ public enum BlotTessellator {
 /// G17 ribbons: fills the space between two edges with translucent ink. The edges
 /// themselves are drawn as ordinary strokes, which gives the bright, gradient edge.
 public enum RibbonTessellator {
-    public static func appendFill(_ a: [InkPoint], _ b: [InkPoint], alpha: Float, into out: inout [InkVertex]) {
+    public static func appendFill(_ a: [InkPoint], _ b: [InkPoint], alpha: Float, tint: Float = 0,
+                                  into out: inout [InkVertex]) {
         let n = min(a.count, b.count)
         guard n >= 2 else { return }
         func v(_ p: InkPoint) -> InkVertex {
-            InkVertex(x: p.x, y: p.y, u: 0, coreFrac: 1, alpha: alpha, along: 0, halfWidth: 1)
+            InkVertex(x: p.x, y: p.y, u: 0, coreFrac: 1, alpha: alpha, along: 0, halfWidth: 1, tint: tint)
         }
         for k in 1..<n {
             out.append(v(a[k - 1])); out.append(v(b[k - 1])); out.append(v(a[k]))

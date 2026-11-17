@@ -62,6 +62,17 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     private var rakeMembers = Set<Int>()
     private var rakeStrokes: [Stroke] = []
     private var rakeConsumed = false
+    // v2 themes. Switching cross-fades over `themeFade` seconds.
+    let themes = ThemeLibrary.all
+    private(set) var theme: Theme
+    private var styleFrom: ThemeStyle
+    private var styleTo: ThemeStyle
+    private var themeChangedAt: Double = 0
+    private static let themeFade: Double = 0.4
+    private static let themeKey = "theme"
+    /// Tells the controls which theme is active (for the picker and button colors).
+    var onThemeChange: ((Theme) -> Void)?
+
     // G24: the ink gathered into the orb, restored by a spread.
     private var gathered: InkDocument?
     // G29: shapes whose fill is saved with the stroke at lift.
@@ -94,6 +105,14 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
 
     override init() {
         let set = ResponseSet.base
+        // Launch argument `-theme <id>` wins, then the remembered choice, then Base.
+        let args = ProcessInfo.processInfo.arguments
+        let requested = args.firstIndex(of: "-theme").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+            ?? UserDefaults.standard.string(forKey: Self.themeKey)
+        let initial = requested.flatMap(ThemeLibrary.theme(id:)) ?? .base
+        theme = initial
+        styleFrom = ThemeStyle(initial)
+        styleTo = styleFrom
         haptics = HapticsPlayer(palette: set.hapticPalette)   // warmed at launch
         mapper = ResponseMapper(set: set, hapticsAvailable: haptics != nil)
         eraseRadius = mapper.set.response(for: .g9)?.effects.first { $0.kind == .dissolve }?.radius ?? 18
@@ -107,9 +126,9 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     }
 
     func attach(to layer: CAMetalLayer) {
-        guard let r = MetalRenderer(layer: layer, theme: mapper.set.theme) else { return }
+        guard let r = MetalRenderer(layer: layer) else { return }
         renderer = r
-        effects = EffectSystem(theme: mapper.set.theme, particleBuffer: r.particleBuffer.contents(),
+        effects = EffectSystem(theme: theme, particleBuffer: r.particleBuffer.contents(),
                                particleCapacity: MetalRenderer.particleCapacity, timeBase: r.startTime)
         // G8: a light tick on every comet bounce.
         effects?.onBounce = { [weak self] in
@@ -206,6 +225,25 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     var onInkStateChange: ((_ canUndo: Bool, _ isEmpty: Bool) -> Void)?
     private var reportedState: (canUndo: Bool, isEmpty: Bool)?
 
+    /// Switches theme (v2): everything on the canvas cross-fades to the new look, and
+    /// the choice is remembered for next launch.
+    func setTheme(id: String) {
+        guard id != theme.id, let next = ThemeLibrary.theme(id: id) else { return }
+        let now = CACurrentMediaTime()
+        styleFrom = currentStyle(now)
+        styleTo = ThemeStyle(next)
+        themeChangedAt = now
+        theme = next
+        effects?.theme = next
+        UserDefaults.standard.set(id, forKey: Self.themeKey)
+        onThemeChange?(next)
+    }
+
+    private func currentStyle(_ now: Double) -> ThemeStyle {
+        let k = Float((now - themeChangedAt) / Self.themeFade)
+        return ThemeStyle.mix(styleFrom, styleTo, Easing.easeOut.apply(k))
+    }
+
     /// Clear (D4): wipes all ink in one tap, as one undoable step.
     func clear() {
         guard !history.document.isEmpty else { return }
@@ -217,7 +255,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     /// Save/Share: the committed ink on the base background, at screen resolution.
     func exportImage() -> CGImage? {
         flushInk()
-        return renderer?.snapshot(space: space, pixelScale: pixelScale)
+        return renderer?.snapshot(space: space, pixelScale: pixelScale, style: styleTo)
     }
 
     /// Brings the GPU's committed ink up to date with the document now, rather than at
@@ -293,19 +331,21 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
 
         liveVertices.removeAll(keepingCapacity: true)
         sprites.removeAll(keepingCapacity: true)
-        let theme = mapper.set.theme
-        if ribbonLive { tessellateRibbon(ribbonA, ribbonB, into: &liveVertices) }
+        if ribbonLive { tessellateRibbon(ribbonA, ribbonB, tint: Float(nextStrokeID), into: &liveVertices) }
         for stroke in rakeStrokes { tessellate(stroke, into: &liveVertices) }
         for i in 0..<builders.count {
-            for b in blots[i] { BlotTessellator.append(b, coreFrac: Self.blotCoreFrac, into: &liveVertices) }
-            if let lb = liveBlot[i] { BlotTessellator.append(toUnits(lb), coreFrac: Self.blotCoreFrac, into: &liveVertices) }
+            let tint = Float(builders[i].strokeID)
+            for b in blots[i] { BlotTessellator.append(b, coreFrac: Self.blotCoreFrac, tint: tint, into: &liveVertices) }
+            if let lb = liveBlot[i] {
+                BlotTessellator.append(toUnits(lb), coreFrac: Self.blotCoreFrac, tint: tint, into: &liveVertices)
+            }
             guard drawing[i] else { continue }
             let b = builders[i]
             guard b.isActive, let head = b.head else { continue }
             StrokeTessellator.append(b.points, taperStart: true, taperEnd: false,
                                      taperLength: brush.taperLength / space.unit,
                                      taperMinFactor: brush.taperMinFactor,
-                                     glowFactor: brush.glowWidthFactor, into: &liveVertices)
+                                     glowFactor: brush.glowWidthFactor, tint: tint, into: &liveVertices)
             // G7: the head sparkle trails slightly behind the finger.
             sparkle[i] += (head - sparkle[i]) * (1 - theme.sparkleLag)
             sprites.append(SpriteVertex(x: sparkle[i].x, y: sparkle[i].y, size: theme.sparkleSize, alpha: 1))
@@ -318,6 +358,7 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         let content = FrameContent(live: liveVertices, sprites: sprites, effects: effectInstances,
                                    particleCount: effects.particleDrawCount,
                                    distortions: effects.distortionBlock(),
+                                   style: currentStyle(frameNow),
                                    time: effects.gpuTime(frameNow), dim: dim, shimmer: shimmer,
                                    space: space, pixelScale: pixelScale)
         renderer.render(drawable: update.drawable, content) { [latency, perf] presentedTime in
@@ -526,13 +567,13 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
         ribbonA.removeAll(); ribbonB.removeAll()
     }
 
-    private func tessellateRibbon(_ a: [InkPoint], _ b: [InkPoint], into out: inout [InkVertex]) {
-        RibbonTessellator.appendFill(a, b, alpha: ribbonAlpha, into: &out)
+    private func tessellateRibbon(_ a: [InkPoint], _ b: [InkPoint], tint: Float, into out: inout [InkVertex]) {
+        RibbonTessellator.appendFill(a, b, alpha: ribbonAlpha, tint: tint, into: &out)
         for edge in [a, b] {
             StrokeTessellator.append(edge, taperStart: true, taperEnd: true,
                                      taperLength: brush.taperLength / space.unit,
                                      taperMinFactor: brush.taperMinFactor,
-                                     glowFactor: brush.glowWidthFactor, into: &out)
+                                     glowFactor: brush.glowWidthFactor, tint: tint, into: &out)
         }
     }
 
@@ -563,16 +604,18 @@ final class CanvasController: NSObject, CAMetalDisplayLinkDelegate, InkHitTestin
     }
 
     private func tessellate(_ stroke: Stroke, into out: inout [InkVertex]) {
+        // The stroke ID is the tint: each stroke keeps its palette color across themes.
+        let tint = Float(stroke.id)
         if let partner = stroke.partner {
-            tessellateRibbon(stroke.points, partner, into: &out)
+            tessellateRibbon(stroke.points, partner, tint: tint, into: &out)
             return
         }
-        if stroke.filled { FillTessellator.append(stroke.points, alpha: fillAlpha, into: &out) }
+        if stroke.filled { FillTessellator.append(stroke.points, alpha: fillAlpha, tint: tint, into: &out) }
         StrokeTessellator.append(stroke.points, taperStart: true, taperEnd: true,
                                  taperLength: brush.taperLength / space.unit,
                                  taperMinFactor: brush.taperMinFactor,
-                                 glowFactor: brush.glowWidthFactor, into: &out)
-        for b in stroke.blots { BlotTessellator.append(b, coreFrac: Self.blotCoreFrac, into: &out) }
+                                 glowFactor: brush.glowWidthFactor, tint: tint, into: &out)
+        for b in stroke.blots { BlotTessellator.append(b, coreFrac: Self.blotCoreFrac, tint: tint, into: &out) }
     }
 
     private func toUnits(_ b: InkBlot) -> InkBlot {

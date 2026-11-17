@@ -1,0 +1,52 @@
+{
+ "id": "neon",
+ "name": "Neon",
+ "order": 1,
+ "background": [
+  0.03,
+  0.012,
+  0.055
+ ],
+ "backgroundEdge": [
+  0.004,
+  0.0,
+  0.012
+ ],
+ "vignette": 0.7,
+ "palette": [
+  [
+   1.0,
+   0.16,
+   0.72
+  ],
+  [
+   0.12,
+   0.88,
+   1.0
+  ],
+  [
+   0.62,
+   1.0,
+   0.18
+  ],
+  [
+   1.0,
+   0.55,
+   0.08
+  ]
+ ],
+ "inkMode": "perStroke",
+ "glowFromInk": true,
+ "glowStrength": 0.9,
+ "glowFalloff": 1.5,
+ "coreScale": 0.7,
+ "sparkle": [
+  1.0,
+  0.92,
+  1.0
+ ],
+ "sparkleSize": 26,
+ "effectPalette": true,
+ "sprite": "star",
+ "blend": "add"
+}

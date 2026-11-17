@@ -12,6 +12,7 @@ enum ShaderSource {
         float alpha;
         float along;
         float halfWidth;     // canvas units
+        float tint;          // stroke ID: picks the palette color (v2 themes)
     };
 
     struct SpriteVertex {
@@ -31,7 +32,46 @@ enum ShaderSource {
         float4 glowColor;
         float4 sparkleColor;
         float4 extra;        // x: dim (1 = full brightness), y: idle shimmer amount (G32)
+        float4 palette1;     // inkColor is palette[0]
+        float4 palette2;
+        float4 palette3;
+        float4 style;        // x: palette count, y: ink mode (0 single, 1 per stroke, 2 along), z: texture (1 chalk), w: sprite
+        float4 style2;       // x: core scale, y: glow falloff, z: particle gravity, w: glow takes ink color
+        float4 bg0;          // background center color; a = vignette amount
+        float4 bg1;          // background edge color
     };
+
+    static float3 paletteAt(int i, constant Uniforms& U) {
+        int n = max(1, int(U.style.x));
+        i = ((i % n) + n) % n;
+        return i == 0 ? U.inkColor.rgb : (i == 1 ? U.palette1.rgb : (i == 2 ? U.palette2.rgb : U.palette3.rgb));
+    }
+
+    static float hash21(float2 p) {
+        p = fract(p * float2(123.34, 456.21));
+        p += dot(p, p + 45.32);
+        return fract(p.x * p.y);
+    }
+
+    // MARK: Background (theme color with an optional vignette)
+
+    struct BackgroundOut { float4 position [[position]]; };
+
+    vertex BackgroundOut background_vertex(uint vid [[vertex_id]]) {
+        const float2 tri[3] = { float2(-1, -1), float2(3, -1), float2(-1, 3) };
+        BackgroundOut o;
+        o.position = float4(tri[vid], 0.0, 1.0);
+        return o;
+    }
+
+    fragment float4 background_fragment(BackgroundOut in [[stage_in]], constant Uniforms& U [[buffer(0)]]) {
+        float2 px = in.position.xy / U.pixelScale;               // points
+        float2 q = (px - U.viewSize * 0.5) / (0.5 * length(U.viewSize));
+        float r = length(q);
+        float v = smoothstep(0.35, 1.05, r) * U.bg0.a;
+        float3 c = mix(U.bg0.rgb, U.bg1.rgb, v);
+        return float4(c * U.extra.x, 1.0);
+    }
 
     // Ink distortions (G11, G14, G18, G19, G20, G22, G23, G24): displace ink vertices,
     // then let the ink return to rest as each distortion fades.
@@ -97,6 +137,7 @@ enum ShaderSource {
         float coreFrac;
         float alpha;
         float along;
+        float tint;
     };
 
     vertex InkOut ink_vertex(uint vid [[vertex_id]],
@@ -112,6 +153,7 @@ enum ShaderSource {
         o.coreFrac = v.coreFrac;
         o.alpha = v.alpha;
         o.along = v.along * U.unitScale;
+        o.tint = v.tint;
         return o;
     }
 
@@ -120,13 +162,52 @@ enum ShaderSource {
     fragment float4 ink_fragment(InkOut in [[stage_in]], constant Uniforms& U [[buffer(0)]]) {
         float d = abs(in.uh / max(in.h, 1e-7));
         float aa = max(fwidth(d), 1e-4);
-        float core = 1.0 - smoothstep(in.coreFrac - aa, in.coreFrac + aa, d);
-        float g = 1.0 - d;
-        g = g * g * U.glowStrength;
-        float3 rgb = U.inkColor.rgb * core + U.glowColor.rgb * g * (1.0 - core);
+        float cf = in.coreFrac * U.style2.x;
+        float core = 1.0 - smoothstep(cf - aa, cf + aa, d);
+        float g = pow(saturate(1.0 - d), U.style2.y) * U.glowStrength;
+
+        // Ink color by theme: one color, a palette color per stroke, or flowing along it.
+        float3 ink;
+        if (U.style.y < 0.5) {
+            ink = U.inkColor.rgb;
+        } else if (U.style.y < 1.5) {
+            ink = paletteAt(int(in.tint + 0.5), U);
+        } else {
+            float n = max(1.0, U.style.x);
+            float t = fract(in.along / 520.0 + in.tint * 0.37) * n;
+            int i = int(floor(t));
+            ink = mix(paletteAt(i, U), paletteAt(i + 1, U), smoothstep(0.0, 1.0, fract(t)));
+        }
+        float3 glow = U.style2.w > 0.5 ? ink : U.glowColor.rgb;
+
+        // Chalk: grainy core with broken edges.
+        if (U.style.z > 0.5) {
+            float n1 = hash21(floor(in.position.xy / 1.6));
+            float n2 = hash21(floor(in.position.xy / 5.0) + 17.0);
+            core *= mix(0.45, 1.0, n1);
+            if (d > cf * 0.45 && n2 < 0.4) core *= 0.25;
+        }
+        float3 rgb = ink * core + glow * g * (1.0 - core);
         // G32: ink shimmers softly while idle.
         float shimmer = 1.0 - U.extra.y * 0.22 * (0.5 + 0.5 * sin(U.time * 1.4 + in.along * 0.045));
         return float4(rgb * shimmer * U.extra.x, core) * in.alpha;
+    }
+
+    // MARK: Sprite shapes (sparkles and particles): 0 soft, 1 star, 2 dust, 3 graphite
+
+    static float spriteShape(float2 pc, float kind, float seed) {
+        float2 q = (pc - 0.5) * 2.0;
+        float d = length(q);
+        if (kind < 0.5) {
+            return pow(saturate(1.0 - d), 2.0);
+        } else if (kind < 1.5) {
+            float star = exp(-abs(q.x) * 9.0) * exp(-abs(q.y) * 1.6) + exp(-abs(q.y) * 9.0) * exp(-abs(q.x) * 1.6);
+            return saturate(star * (1.0 - d) * 1.6 + (1.0 - smoothstep(0.0, 0.25, d)));
+        } else if (kind < 2.5) {
+            float n = hash21(floor(pc * 5.0) + seed);
+            return (1.0 - smoothstep(0.55, 1.0, d)) * step(0.35, n) * 0.85;
+        }
+        return (1.0 - smoothstep(0.45, 0.6, d)) * 0.9;
     }
 
     // MARK: Sprites (stroke-head sparkle)
@@ -152,10 +233,16 @@ enum ShaderSource {
     fragment float4 sprite_fragment(SpriteOut in [[stage_in]],
                                     float2 pc [[point_coord]],
                                     constant Uniforms& U [[buffer(0)]]) {
-        float d = length(pc - 0.5) * 2.0;
-        float core = 1.0 - smoothstep(0.0, 0.22, d);
-        float halo = pow(max(0.0, 1.0 - d), 3.0) * 0.55;
-        float a = (core + halo) * in.alpha;
+        float a;
+        if (U.style.w < 0.5) {
+            float d = length(pc - 0.5) * 2.0;
+            float core = 1.0 - smoothstep(0.0, 0.22, d);
+            float halo = pow(max(0.0, 1.0 - d), 3.0) * 0.55;
+            a = core + halo;
+        } else {
+            a = spriteShape(pc, U.style.w, 3.0);
+        }
+        a *= in.alpha;
         return float4(U.sparkleColor.rgb * a * U.extra.x, a);
     }
     // MARK: Effects (rings, discs, dots). Instanced quads, additive, in points.
@@ -258,6 +345,7 @@ enum ShaderSource {
         float pointSize [[point_size]];
         float alpha;
         float3 color;
+        float seed;
     };
 
     vertex ParticleOut particle_vertex(uint vid [[vertex_id]],
@@ -271,6 +359,7 @@ enum ShaderSource {
             o.pointSize = 1.0;
             o.alpha = 0.0;
             o.color = float3(0.0);
+            o.seed = 0.0;
             return o;
         }
         float f = 1.0 - t / p.life;
@@ -285,17 +374,18 @@ enum ShaderSource {
             float k = max(p.drag, 1e-3);
             pos = float2(p.origin) + float2(p.vel) * (1.0 - exp(-k * t)) / k;
         }
+        pos.y += 0.5 * U.style2.z * t * t;   // theme gravity (chalk dust falls)
         o.position = ptToClip(pos, U);
         o.pointSize = max(1.0, p.size * U.pixelScale * (0.6 + 0.4 * f));
         o.alpha = p.alpha * pow(f, 1.5);
         o.color = float3(p.color);
+        o.seed = float(vid % 97);
         return o;
     }
 
     fragment float4 particle_fragment(ParticleOut in [[stage_in]], float2 pc [[point_coord]],
                                       constant Uniforms& U [[buffer(0)]]) {
-        float d = length(pc - 0.5) * 2.0;
-        float a = pow(saturate(1.0 - d), 2.0) * in.alpha;
+        float a = spriteShape(pc, U.style.w, in.seed) * in.alpha;
         return float4(in.color * a * U.extra.x, a);
     }
     """#

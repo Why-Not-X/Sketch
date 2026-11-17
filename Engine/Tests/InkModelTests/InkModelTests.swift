@@ -97,6 +97,6 @@ final class InkModelTests: XCTestCase {
     }
 
     func testInkVertexLayoutMatchesShader() {
-        XCTAssertEqual(MemoryLayout<InkVertex>.stride, 28)
+        XCTAssertEqual(MemoryLayout<InkVertex>.stride, 32)
     }
 }

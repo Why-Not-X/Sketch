@@ -47,27 +47,6 @@ public struct RGBA: Codable, Equatable, Sendable {
     }
 }
 
-/// Colors and effect styles. V2 swaps these; effect code must read them from here.
-public struct Theme: Codable, Equatable, Sendable {
-    public var background: RGBA
-    public var ink: RGBA
-    public var glow: RGBA
-    public var sparkle: RGBA
-    /// Brightness of the halo around ink, 0...1.
-    public var glowStrength: Float
-    /// Head sparkle size in points and how far it lags behind the finger (0 = none, 1 = frozen).
-    public var sparkleSize: Float
-    public var sparkleLag: Float
-
-    public func color(_ role: ColorRole) -> RGBA {
-        switch role {
-        case .ink: return ink
-        case .glow: return glow
-        case .sparkle: return sparkle
-        }
-    }
-}
-
 /// What one gesture does. Field names follow the Appendix A columns; `effects` is the
 /// renderable part.
 public struct ResponseDefinition: Codable, Equatable, Sendable {

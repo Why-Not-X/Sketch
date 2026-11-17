@@ -12,7 +12,7 @@ struct SpriteVertex {
     var alpha: Float
 }
 
-/// Matches `Uniforms` in ShaderSource.swift (96 bytes).
+/// Matches `Uniforms` in ShaderSource.swift (208 bytes).
 struct Uniforms {
     var viewSize: SIMD2<Float>
     var center: SIMD2<Float>
@@ -25,6 +25,18 @@ struct Uniforms {
     var sparkleColor: SIMD4<Float>
     /// x: dim (1 = full brightness), y: idle shimmer amount.
     var extra: SIMD4<Float> = SIMD4(1, 0, 0, 0)
+    // v2 themes. `inkColor` is palette[0].
+    var palette1: SIMD4<Float>
+    var palette2: SIMD4<Float>
+    var palette3: SIMD4<Float>
+    /// x: palette count, y: ink mode, z: texture, w: sprite.
+    var style: SIMD4<Float>
+    /// x: core scale, y: glow falloff, z: particle gravity, w: glow takes the ink color.
+    var style2: SIMD4<Float>
+    /// Background center color; alpha holds the vignette amount.
+    var bg0: SIMD4<Float>
+    /// Background edge color.
+    var bg1: SIMD4<Float>
 }
 
 /// Matches `Distortion` in ShaderSource.swift (32 bytes).
@@ -65,6 +77,7 @@ struct FrameContent {
     var effects: [EffectInstance]
     var particleCount: Int
     var distortions: DistortionBlock
+    var style: ThemeStyle
     var time: Float
     /// G32: overall brightness and ink shimmer.
     var dim: Float = 1
@@ -74,7 +87,8 @@ struct FrameContent {
 }
 
 /// Executes visual commands in Metal. Draw order: committed ink, live ink, effects,
-/// particles, stroke-head sparkles. Effects and particles blend additively over the ink.
+/// particles, stroke-head sparkles, over a background pass (theme color and vignette).
+/// Effects and particles add light, or paint over the canvas in light themes.
 final class MetalRenderer {
     static let particleCapacity = 3000   // R4: particle cap
 
@@ -83,10 +97,12 @@ final class MetalRenderer {
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let inkPipeline: MTLRenderPipelineState
-    private let spritePipeline: MTLRenderPipelineState
-    private let effectPipeline: MTLRenderPipelineState
-    private let particlePipeline: MTLRenderPipelineState
-    private let theme: Theme
+    private let backgroundPipeline: MTLRenderPipelineState
+    /// Effects, particles and sparkles come in two blends: adding light (dark themes)
+    /// and painting over (light themes).
+    private let spritePipeline: MTLRenderPipelineState, spriteOverPipeline: MTLRenderPipelineState
+    private let effectPipeline: MTLRenderPipelineState, effectOverPipeline: MTLRenderPipelineState
+    private let particlePipeline: MTLRenderPipelineState, particleOverPipeline: MTLRenderPipelineState
 
     private var committed: MTLBuffer
     private var committedCount = 0
@@ -99,27 +115,26 @@ final class MetalRenderer {
     private var frameIndex = 0
     private let inflight = DispatchSemaphore(value: MetalRenderer.framesInFlight)
 
-    init?(layer: CAMetalLayer, theme: Theme) {
+    init?(layer: CAMetalLayer) {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
               let library = try? device.makeLibrary(source: ShaderSource.code, options: nil) else { return nil }
         self.layer = layer
         self.device = device
         self.queue = queue
-        self.theme = theme
 
         layer.device = device
         layer.pixelFormat = .bgra8Unorm
         layer.framebufferOnly = true
         layer.isOpaque = true
 
-        func pipeline(_ v: String, _ f: String, additive: Bool) -> MTLRenderPipelineState? {
+        func pipeline(_ v: String, _ f: String, additive: Bool, blend: Bool = true) -> MTLRenderPipelineState? {
             let d = MTLRenderPipelineDescriptor()
             d.vertexFunction = library.makeFunction(name: v)
             d.fragmentFunction = library.makeFunction(name: f)
             let c = d.colorAttachments[0]!
             c.pixelFormat = .bgra8Unorm
-            c.isBlendingEnabled = true
+            c.isBlendingEnabled = blend
             c.rgbBlendOperation = .add
             c.alphaBlendOperation = .add
             c.sourceRGBBlendFactor = .one
@@ -129,13 +144,18 @@ final class MetalRenderer {
             return try? device.makeRenderPipelineState(descriptor: d)
         }
         guard let ink = pipeline("ink_vertex", "ink_fragment", additive: false),
+              let background = pipeline("background_vertex", "background_fragment", additive: false, blend: false),
               let sprite = pipeline("sprite_vertex", "sprite_fragment", additive: true),
+              let spriteOver = pipeline("sprite_vertex", "sprite_fragment", additive: false),
               let effect = pipeline("effect_vertex", "effect_fragment", additive: true),
-              let particle = pipeline("particle_vertex", "particle_fragment", additive: true) else { return nil }
+              let effectOver = pipeline("effect_vertex", "effect_fragment", additive: false),
+              let particle = pipeline("particle_vertex", "particle_fragment", additive: true),
+              let particleOver = pipeline("particle_vertex", "particle_fragment", additive: false) else { return nil }
         inkPipeline = ink
-        spritePipeline = sprite
-        effectPipeline = effect
-        particlePipeline = particle
+        backgroundPipeline = background
+        spritePipeline = sprite; spriteOverPipeline = spriteOver
+        effectPipeline = effect; effectOverPipeline = effectOver
+        particlePipeline = particle; particleOverPipeline = particleOver
 
         let stride = MemoryLayout<InkVertex>.stride
         guard let c = device.makeBuffer(length: 256 * 1024 * stride, options: .storageModeShared),
@@ -164,7 +184,7 @@ final class MetalRenderer {
         pass.colorAttachments[0].texture = tex
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .dontCare
-        var u = uniforms(space: InkSpace(width: 8, height: 8), pixelScale: 1, time: 0)
+        var u = uniforms(space: InkSpace(width: 8, height: 8), pixelScale: 1, time: 0, style: ThemeStyle(.base))
         let verts = [InkVertex(x: 0, y: 0, u: 1, coreFrac: 0.3, alpha: 1, along: 0),
                      InkVertex(x: 0.1, y: 0, u: -1, coreFrac: 0.3, alpha: 1, along: 0),
                      InkVertex(x: 0, y: 0.1, u: 1, coreFrac: 0.3, alpha: 1, along: 0)]
@@ -176,18 +196,22 @@ final class MetalRenderer {
         enc.setVertexBytes(&dist, length: MemoryLayout<DistortionBlock>.stride, index: 2)
         enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
         enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+        enc.setRenderPipelineState(backgroundPipeline)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         enc.setRenderPipelineState(inkPipeline)
         verts.withUnsafeBytes { enc.setVertexBytes($0.baseAddress!, length: $0.count, index: 0) }
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        enc.setRenderPipelineState(effectPipeline)
-        enc.setVertexBytes(&effect, length: MemoryLayout<EffectInstance>.stride, index: 0)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: 1)
-        enc.setRenderPipelineState(particlePipeline)
-        enc.setVertexBuffer(particleBuffer, offset: 0, index: 0)
-        enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: 1)
-        enc.setRenderPipelineState(spritePipeline)
-        enc.setVertexBytes(&sprite, length: MemoryLayout<SpriteVertex>.stride, index: 0)
-        enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: 1)
+        for over in [false, true] {
+            enc.setRenderPipelineState(over ? effectOverPipeline : effectPipeline)
+            enc.setVertexBytes(&effect, length: MemoryLayout<EffectInstance>.stride, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: 1)
+            enc.setRenderPipelineState(over ? particleOverPipeline : particlePipeline)
+            enc.setVertexBuffer(particleBuffer, offset: 0, index: 0)
+            enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: 1)
+            enc.setRenderPipelineState(over ? spriteOverPipeline : spritePipeline)
+            enc.setVertexBytes(&sprite, length: MemoryLayout<SpriteVertex>.stride, index: 0)
+            enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: 1)
+        }
         enc.endEncoding()
         cb.commit()
         cb.waitUntilCompleted()
@@ -195,22 +219,26 @@ final class MetalRenderer {
 
     /// Save/Share: renders the committed ink alone on the base background, at the given
     /// pixel size, with no effects or distortions (effects in flight are not captured).
-    func snapshot(space: InkSpace, pixelScale: Float) -> CGImage? {
+    func snapshot(space: InkSpace, pixelScale: Float, style: ThemeStyle) -> CGImage? {
         let w = Int((space.width * pixelScale).rounded()), h = Int((space.height * pixelScale).rounded())
         guard w > 0, h > 0 else { return nil }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
         d.usage = .renderTarget
         d.storageMode = .shared
         guard let tex = device.makeTexture(descriptor: d), let cb = queue.makeCommandBuffer() else { return nil }
-        let bg = theme.background
+        let bg = style.background
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = tex
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.r), green: Double(bg.g), blue: Double(bg.b), alpha: 1)
-        var u = uniforms(space: space, pixelScale: pixelScale, time: 0)
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
+        var u = uniforms(space: space, pixelScale: pixelScale, time: 0, style: style)
         var dist = DistortionBlock()
         if let enc = cb.makeRenderCommandEncoder(descriptor: pass) {
+            enc.setRenderPipelineState(backgroundPipeline)
+            enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             if committedCount > 0 {
                 enc.setRenderPipelineState(inkPipeline)
                 enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
@@ -275,16 +303,16 @@ final class MetalRenderer {
         let effectBuffer = upload(f.effects, into: &effectBuffers[frameIndex])
 
         guard let cb = queue.makeCommandBuffer() else { inflight.signal(); return }
-        let bg = theme.background
+        let bg = f.style.background
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = drawable.texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         let dim = Double(f.dim)
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.r) * dim, green: Double(bg.g) * dim,
-                                                            blue: Double(bg.b) * dim, alpha: 1)
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x) * dim, green: Double(bg.y) * dim,
+                                                            blue: Double(bg.z) * dim, alpha: 1)
 
-        var u = uniforms(space: f.space, pixelScale: f.pixelScale, time: f.time)
+        var u = uniforms(space: f.space, pixelScale: f.pixelScale, time: f.time, style: f.style)
         u.extra = SIMD4(f.dim, f.shimmer, 0, 0)
         var dist = f.distortions
         if let enc = cb.makeRenderCommandEncoder(descriptor: pass) {
@@ -292,6 +320,8 @@ final class MetalRenderer {
             enc.setVertexBytes(&dist, length: MemoryLayout<DistortionBlock>.stride, index: 2)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
 
+            enc.setRenderPipelineState(backgroundPipeline)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             enc.setRenderPipelineState(inkPipeline)
             if committedCount > 0 {
                 enc.setVertexBuffer(committed, offset: 0, index: 0)
@@ -302,17 +332,17 @@ final class MetalRenderer {
                 enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: f.live.count)
             }
             if !f.effects.isEmpty, let effectBuffer {
-                enc.setRenderPipelineState(effectPipeline)
+                enc.setRenderPipelineState(f.style.blendOver ? effectOverPipeline : effectPipeline)
                 enc.setVertexBuffer(effectBuffer, offset: 0, index: 0)
                 enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: f.effects.count)
             }
             if f.particleCount > 0 {
-                enc.setRenderPipelineState(particlePipeline)
+                enc.setRenderPipelineState(f.style.blendOver ? particleOverPipeline : particlePipeline)
                 enc.setVertexBuffer(particleBuffer, offset: 0, index: 0)
                 enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: f.particleCount)
             }
             if !f.sprites.isEmpty, let spriteBuffer {
-                enc.setRenderPipelineState(spritePipeline)
+                enc.setRenderPipelineState(f.style.blendOver ? spriteOverPipeline : spritePipeline)
                 enc.setVertexBuffer(spriteBuffer, offset: 0, index: 0)
                 enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: f.sprites.count)
             }
@@ -346,18 +376,22 @@ final class MetalRenderer {
         return buffer
     }
 
-    private func uniforms(space: InkSpace, pixelScale: Float, time: Float) -> Uniforms {
-        func v(_ c: RGBA) -> SIMD4<Float> { SIMD4(c.r, c.g, c.b, c.a) }
-        return Uniforms(
+    private func uniforms(space: InkSpace, pixelScale: Float, time: Float, style t: ThemeStyle) -> Uniforms {
+        Uniforms(
             viewSize: SIMD2(space.width, space.height),
             center: SIMD2(space.centerX, space.centerY),
             unitScale: space.unit,
             pixelScale: pixelScale,
-            glowStrength: theme.glowStrength,
+            glowStrength: t.glowStrength,
             time: time,
-            inkColor: v(theme.ink),
-            glowColor: v(theme.glow),
-            sparkleColor: v(theme.sparkle)
+            inkColor: t.palette[0],
+            glowColor: t.glow,
+            sparkleColor: t.sparkle,
+            palette1: t.palette[1], palette2: t.palette[2], palette3: t.palette[3],
+            style: SIMD4(t.paletteCount, t.inkMode, t.texture, t.sprite),
+            style2: SIMD4(t.coreScale, t.glowFalloff, t.gravity, t.glowFromInk),
+            bg0: SIMD4(t.background.x, t.background.y, t.background.z, t.vignette),
+            bg1: t.edge
         )
     }
 }

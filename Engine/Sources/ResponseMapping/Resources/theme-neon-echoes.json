@@ -1,0 +1,61 @@
+{
+ "id": "neon-echoes",
+ "name": "Neon Echoes",
+ "order": 2,
+ "background": [
+  0.012,
+  0.016,
+  0.055
+ ],
+ "backgroundEdge": [
+  0.0,
+  0.0,
+  0.012
+ ],
+ "vignette": 0.75,
+ "palette": [
+  [
+   0.12,
+   0.88,
+   1.0
+  ],
+  [
+   1.0,
+   0.16,
+   0.72
+  ],
+  [
+   0.55,
+   0.4,
+   1.0
+  ],
+  [
+   0.62,
+   1.0,
+   0.18
+  ]
+ ],
+ "inkMode": "perStroke",
+ "glowFromInk": true,
+ "glowStrength": 0.85,
+ "glowFalloff": 1.6,
+ "coreScale": 0.7,
+ "sparkle": [
+  0.9,
+  1.0,
+  1.0
+ ],
+ "sparkleSize": 24,
+ "effectPalette": true,
+ "sprite": "star",
+ "blend": "add",
+ "echo": {
+  "count": 3,
+  "delay": 0.12,
+  "growth": 0.3,
+  "fade": 0.55,
+  "strokeCopies": 2,
+  "strokeTravel": 28,
+  "strokeDuration": 1.1
+ }
+}

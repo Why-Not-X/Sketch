@@ -54,10 +54,15 @@ final class EffectSystem {
         var relX: Float = 0, relY: Float = 0
         /// Multi-finger touch points, kept current by `.updatePoints`.
         var points: [Float] = []
+        /// Which palette color this effect uses in themes with `effectPalette`.
+        var variant = 0
     }
 
     private var effects: [Live] = []
-    private let theme: Theme
+    /// The active theme. Colors are looked up every frame, so live effects recolor on a switch.
+    var theme: Theme
+    /// Palette variant for the effect being spawned (themes with `effectPalette`).
+    private var spawnVariant = 0
     private let timeBase: Double
     private let particles: UnsafeMutablePointer<Particle>
     let particleCapacity: Int
@@ -109,6 +114,8 @@ final class EffectSystem {
             if effects.count >= Self.maxEffects { effects.removeFirst() }   // oldest first (R4)
             var live = Live(s: s, born: now, releasedAt: nil, lastEmit: now, px: s.x, py: s.y)
             live.points = s.points
+            spawnVariant &+= 1
+            live.variant = spawnVariant
             switch s.kind {
             case .burst: spawnBurst(s, now: now)
             case .launch: spawnLaunch(s, now: now)
@@ -154,7 +161,7 @@ final class EffectSystem {
     /// dissolve effect (if a scribble is running).
     func emitDissolve(_ points: [SIMD2<Float>], now: Double) {
         guard !points.isEmpty, let style = effects.last(where: { $0.s.kind == .dissolve && $0.releasedAt == nil })?.s else { return }
-        let c = theme.color(style.color)
+        let c = theme.color(style.color, variant: spawnVariant)
         let perPoint = max(1, style.count)
         let stride = max(1, points.count * perPoint / scaled(90))   // at most ~90 particles per call
         let life = Float(style.duration ?? 1)
@@ -197,7 +204,7 @@ final class EffectSystem {
             guard age >= 0 else { continue }
             let op = Lifetime.opacity(age: age, life: s.duration, releasedAt: releasedAge)
             let p = Float(s.duration.map { age / $0 } ?? min(1, age / 0.6))
-            let c = theme.color(s.color)
+            let c = theme.color(s.color, variant: e.variant)
             let a = s.intensity * op
 
             func add(_ x: Float, _ y: Float, _ r: Float, _ th: Float, _ alpha: Float, _ shape: Float,
@@ -335,6 +342,7 @@ final class EffectSystem {
     // MARK: Effect helpers
 
     private func stepComet(index: Int, dt: Float, now: Double) {
+        spawnVariant = effects[index].variant
         guard dt > 0 else { return }
         var q = effects[index]
         let drag = exp(-1.1 * dt)
@@ -358,7 +366,7 @@ final class EffectSystem {
         let due = Int((now - q.lastEmit) * rate)
         guard due > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
-        let c = theme.color(q.s.color)
+        let c = theme.color(q.s.color, variant: spawnVariant)
         let op = Lifetime.opacity(age: now - q.born, life: q.s.duration)
         for _ in 0..<min(due, 6) {
             emit(Particle(ox: q.px, oy: q.py, vx: -q.vx * 0.05 + Float.random(in: -12...12),
@@ -403,7 +411,7 @@ final class EffectSystem {
         let life = Float(s.duration ?? 1.5)
         let drag: Float = 2.5
         let reach = drag / (1 - exp(-drag * life))
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         let t0 = gpuTime(now + s.delay)
         for k in 0..<scaled(max(1, s.count)) {
             let angle = (Float(k) + Float.random(in: 0..<0.8)) / Float(scaled(max(1, s.count))) * 2 * .pi
@@ -416,7 +424,7 @@ final class EffectSystem {
 
     private func spawnArcSparks(_ path: [SIMD2<Float>], _ s: EffectSpawn, now: Double) {
         guard !path.isEmpty else { return }
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         for _ in 0..<scaled(min(24, path.count)) {
             let q = path[Int.random(in: 0..<path.count)]
             let ang = Float.random(in: 0..<(2 * .pi)), v = Float.random(in: 60...180)
@@ -433,7 +441,7 @@ final class EffectSystem {
         let life = Float(s.duration ?? 1.2)
         let drag: Float = 2
         let reach = drag / (1 - exp(-drag * life))
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         for _ in 0..<scaled(max(1, s.count)) {
             let ang = base + Float.random(in: -0.3...0.3)
             let v = s.radius * reach * Float.random(in: 0.6...1.1)
@@ -447,7 +455,7 @@ final class EffectSystem {
     private func spawnVortex(_ s: EffectSpawn, now: Double) {
         let inward = s.magnitude >= 0
         let life = Float(s.duration ?? 1.2)
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         for _ in 0..<scaled(max(1, s.count)) {
             let r0 = inward ? s.radius * Float.random(in: 0.35...1) : Float.random(in: 0...12)
             let r1 = inward ? s.radius * 0.02 : s.radius * Float.random(in: 0.6...1.2)
@@ -496,7 +504,7 @@ final class EffectSystem {
     /// G28: sparks fly off along both strokes, in both senses of each direction.
     private func spawnCrossSparks(_ s: EffectSpawn, now: Double) {
         let life = Float(s.duration ?? 0.45)
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         let dirs = [(s.directionX, s.directionY), (-s.directionX, -s.directionY),
                     (s.originX, s.originY), (-s.originX, -s.originY)]
         let drag: Float = 4
@@ -530,12 +538,13 @@ final class EffectSystem {
 
     /// G32: slow motes, mostly anywhere, some near the last touch.
     private func emitDrift(index: Int, now: Double) {
+        spawnVariant = effects[index].variant
         let s = effects[index].s
         let rate = Double(max(1, s.count)) * Double(spawnScale)
         let due = Int((now - effects[index].lastEmit) * rate)
         guard due > 0, bounds.w > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         for _ in 0..<min(due, 4) {
             let near = Float.random(in: 0...1) < 0.4
             let x = near ? s.x + Float.random(in: -150...150) : Float.random(in: 0...bounds.w)
@@ -549,7 +558,7 @@ final class EffectSystem {
     /// G20/G21: particles circling the point.
     private func spawnOrbit(_ s: EffectSpawn, now: Double) {
         let life = Float(s.duration ?? 3)
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         let spin: Float = s.tempo != 0 ? max(-8, min(8, s.tempo)) : 2.5
         for _ in 0..<scaled(max(1, s.count)) {
             let r = max(8, s.radius) * Float.random(in: 0.75...1.2)
@@ -562,6 +571,7 @@ final class EffectSystem {
 
     /// G26: faint particles on the segments between neighbouring fingers.
     private func emitShimmer(index: Int, now: Double) {
+        spawnVariant = effects[index].variant
         let e = effects[index]
         let n = e.points.count / 2
         guard n >= 2 else { return }
@@ -569,7 +579,7 @@ final class EffectSystem {
         let due = Int((now - e.lastEmit) * rate)
         guard due > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
-        let c = theme.color(e.s.color)
+        let c = theme.color(e.s.color, variant: spawnVariant)
         for _ in 0..<min(due, 8) {
             let k = Int.random(in: 0..<(n - 1)), f = Float.random(in: 0...1)
             let x = e.points[2 * k] + (e.points[2 * k + 2] - e.points[2 * k]) * f
@@ -580,12 +590,13 @@ final class EffectSystem {
     }
 
     private func emitMotes(index: Int, now: Double) {
+        spawnVariant = effects[index].variant
         let s = effects[index].s
         let rate = Double(max(1, s.count)) * Double(spawnScale)
         let due = Int((now - effects[index].lastEmit) * rate)
         guard due > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         let life: Float = 1.2, drag: Float = 2
         let reach = drag / (1 - exp(-drag * life))
         for _ in 0..<min(due, 8) {
@@ -600,12 +611,13 @@ final class EffectSystem {
 
     /// G14: drops short-lived glow particles behind the moving orb.
     private func emitTrail(index: Int, now: Double) {
+        spawnVariant = effects[index].variant
         let s = effects[index].s
         let rate = Double(max(1, s.count)) * Double(spawnScale)
         let due = Int((now - effects[index].lastEmit) * rate)
         guard due > 0 else { return }
         effects[index].lastEmit += Double(due) / rate
-        let c = theme.color(s.color)
+        let c = theme.color(s.color, variant: spawnVariant)
         let lx = effects[index].px, ly = effects[index].py
         guard hypot(s.x - lx, s.y - ly) > 0.5 else { return }
         for k in 0..<min(due, 6) {

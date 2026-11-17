@@ -1,0 +1,52 @@
+{
+ "id": "aurora",
+ "name": "Aurora",
+ "order": 5,
+ "background": [
+  0.018,
+  0.03,
+  0.085
+ ],
+ "backgroundEdge": [
+  0.0,
+  0.004,
+  0.02
+ ],
+ "vignette": 0.7,
+ "palette": [
+  [
+   0.32,
+   1.0,
+   0.68
+  ],
+  [
+   0.18,
+   0.84,
+   0.95
+  ],
+  [
+   0.58,
+   0.45,
+   1.0
+  ],
+  [
+   0.95,
+   0.5,
+   0.88
+  ]
+ ],
+ "inkMode": "alongStroke",
+ "glowFromInk": true,
+ "glowStrength": 0.6,
+ "glowFalloff": 1.3,
+ "coreScale": 0.9,
+ "sparkle": [
+  0.85,
+  1.0,
+  0.95
+ ],
+ "sparkleSize": 22,
+ "effectPalette": true,
+ "sprite": "soft",
+ "blend": "add"
+}
